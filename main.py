@@ -1,3 +1,6 @@
+from run_models import *
+
+
 import os
 import io
 import torch.version

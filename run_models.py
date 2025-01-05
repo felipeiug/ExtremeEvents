@@ -1,6 +1,8 @@
 import os
 import io
 import torch.version
+import pandas as pd
+
 from tqdm import tqdm
 from neuronios.NN import Rede3, Rede, Rede2
 from datareader.data_reader import ReadRasters
@@ -13,7 +15,6 @@ import torch.nn.functional as F
 
 os.system("cls")
 
-load = True # Se irei utilizar o modelo salvo
 device = "cpu"
 torch.set_default_dtype(torch.float32)
 
@@ -23,9 +24,9 @@ if torch.cuda.is_available():
 else:
     print("CUDA não está disponível.")
 
-modelo = 3     # Modelo utilizado no teste
+modelo = 2     # Modelo utilizado no teste
 batch_size = 3 # Processamento em paralelo
-n_dias = 7     # Número de dias no futuro da previsão
+n_dias = 5     # Número de dias no futuro da previsão
 n_temp = 10    # Número de tempos no passado LSTM (dias)
 n_data = 14    # Número de bandas no raster <- Bandas dos rasters de dados, data, uso do solo, declividade e altitude
 div_out = 4    # Os tamanhos X e Y serão dividos por div_out na convolução
@@ -87,85 +88,65 @@ elif modelo == 3:
         null_val    = -99
     )
 
+print("Importando modelo treinado")
+modelos = os.listdir(f"modelos_{modelo}")
 
-print("Criando Otimizador")
-optimizer = optim.AdamW(cnn_lstm.parameters(), lr=0.001, weight_decay=0.05)
-
-loss = 0
-start_epoch = 0
-last_losses = []
-
-if load:
-    print("Importando modelos treinados")
-    modelos = os.listdir(f"modelos_{modelo}")
-    if len(modelos) > 0:
-        for _modelo in modelos:
-            file = f"modelos_{modelo}/{_modelo}"
-            checkpoint = torch.load(file, weights_only=True)
-            last_losses.append(checkpoint['LOSS'])
-
-        epochs = [int(i.split("_")[-1].split(".")[0]) for i in modelos]
-        max_epoch = max(epochs)
-
-        file = f"modelos_{modelo}/modelo_{max_epoch}.pth"
-
+metricas = {
+    "epoch":[],
+    "LOSS":[],
+    "REAL":[],
+    "PRED":[],
+    "NSE":[],
+    "MSE":[],
+}
+if len(modelos) > 0:
+    max_epoch = None
+    last_loss = None
+    for _modelo in tqdm(modelos, total=len(modelos), desc="Lendo Modelos"):
+        file = f"modelos_{modelo}/{_modelo}"
         checkpoint = torch.load(file, weights_only=True)
 
-        cnn_lstm.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        start_epoch = checkpoint['epoch']+1
-        loss = checkpoint['LOSS']
+        for key in metricas.keys():
+            metricas[key].append(float(checkpoint[key]))
 
-# Métrica de Erro
-print("Criando Métricas de Erro")
-criterion = CustomLoss2(reader.mean_cotas, last_losses=last_losses, start_epoch=start_epoch).to(torch.float32)
+        if last_loss == None or (1-checkpoint['NSE']) < last_loss:
+            last_loss = checkpoint['NSE']
+            max_epoch = checkpoint['epoch']
+
+    file = f"modelos_{modelo}/modelo_{max_epoch}.pth"
+
+    checkpoint = torch.load(file, weights_only=True)
+    cnn_lstm.load_state_dict(checkpoint['model_state_dict'])
+
+pd.DataFrame(metricas).to_excel(f"epocas_modelo_{modelo}.xlsx")
 
 # Treinamento
-epoch = start_epoch
-print("Iniciando Treino")
+print("Iniciando Valores")
 
-while True:
-    reader.reset()
-    cnn_lstm.train()
+saidas = {
+    "data":[],
+}
+for i in range(n_dias):
+    saidas[f"R_t{i}"] = []
+    saidas[f"P_t{i}"] = []
 
-    criterion.epoch = epoch
-    criterion.losses_epoch = []
+for ciclo in tqdm(range(reader.total_train()), total=reader.total_train(), desc=f"Processando dados treindos"):
+    X, y = reader.next()
 
-    buffer = io.StringIO()
-    progress_bar = tqdm(range(reader.total_train()), file=buffer, total=reader.total_train(), desc=f"LOSS: {loss:.4g} | Epoch: {epoch}")
-    for step in progress_bar:
-        X, y = reader.next()
+    if device != "cuda":
+        X = X.to(device="cpu")
+        y = y.to(device="cpu")
 
-        if not (y == -99).any().item():
-            if device != "cuda":
-                X = X.to(device="cpu")
-                y = y.to(device="cpu")
+    outputs = cnn_lstm(X)
 
-            # Forward pass
-            outputs = cnn_lstm(X)
-            loss = criterion(outputs, y)
-            
-            # Backward pass e otimização
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+    for batch in range(reader.batch_size):
+        index = (ciclo*reader.batch_size) + batch
+        data = reader.date_range[index]
 
-        description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items()])
-        description += f" | Epoch: {epoch}"
+        saidas["data"].append(data)
+        for i in range(n_dias):
+            saidas[f"R_t{i}"].append(float(y[batch][i]))
+            saidas[f"P_t{i}"].append(float(outputs[batch][i]))
 
-        progress_bar.set_description(description)
-        criterion.print(buffer.getvalue())
+pd.DataFrame(saidas).to_excel(f"valores_modelo_{modelo}.xlsx")
 
-    criterion.last_losses.append(criterion.erros["LOSS"])
-
-    dados_save = {
-        'epoch': epoch,
-        'model_state_dict': cnn_lstm.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-    }
-    for name, erro in criterion.erros.items():
-        dados_save[name] = erro
-
-    torch.save(dados_save, f"modelos_{modelo}/modelo_{epoch}.pth")
-
-    epoch += 1
