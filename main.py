@@ -26,9 +26,9 @@ if torch.cuda.is_available():
 else:
     print("CUDA não está disponível.")
 
-modelo = 3     # Modelo utilizado no teste
+modelo = 2     # Modelo utilizado no teste
 batch_size = 3 # Processamento em paralelo
-n_dias = 7     # Número de dias no futuro da previsão
+n_dias = 5     # Número de dias no futuro da previsão
 n_temp = 10    # Número de tempos no passado LSTM (dias)
 n_data = 14    # Número de bandas no raster <- Bandas dos rasters de dados, data, uso do solo, declividade e altitude
 div_out = 4    # Os tamanhos X e Y serão dividos por div_out na convolução
