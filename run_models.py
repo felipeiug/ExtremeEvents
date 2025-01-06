@@ -109,8 +109,8 @@ if len(modelos) > 0:
         for key in metricas.keys():
             metricas[key].append(float(checkpoint[key]))
 
-        if last_loss == None or (1-checkpoint['NSE']) < last_loss:
-            last_loss = checkpoint['NSE']
+        if last_loss == None or (1-checkpoint['LOSS']) < last_loss:
+            last_loss = checkpoint['LOSS']
             max_epoch = checkpoint['epoch']
 
     file = f"modelos_{modelo}/modelo_{max_epoch}.pth"

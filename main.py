@@ -1,6 +1,3 @@
-from run_models import *
-
-
 import os
 import io
 import torch.version
@@ -13,6 +10,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+
+# Apenas para gerar os resultados
+# from run_models import *
 
 os.system("cls")
 
@@ -50,7 +50,8 @@ reader = ReadRasters(
     batch_size=batch_size,
     n_times=n_temp,
     n_days=n_dias,
-    train_percent=0.7,
+    train_percent=0.8,
+    randomize=False,
 )
 
 print(f"Criando RNA com o modelo {modelo}")
