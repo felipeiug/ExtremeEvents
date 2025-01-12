@@ -98,7 +98,7 @@ for i in range(2):
         "MSE":[],
     }
     max_epoch = 21
-    if i == 0:
+    if True:
         last_loss = None
         for _modelo in tqdm(modelos, total=len(modelos), desc="Lendo Modelos"):
             file = f"modelos_{modelo}/{_modelo}"
@@ -163,9 +163,6 @@ for i in range(2):
 
                 dados_reais = torch.cat((dados_reais, y[batch].unsqueeze(0)), dim=0)
                 dados_previstos = torch.cat((dados_previstos, outputs[batch].unsqueeze(0)), dim=0)
-
-            if ciclo == 25:
-                break
 
     pd.DataFrame(saidas).to_excel(f"valores_modelo_{modelo}.xlsx", index=False)
 
