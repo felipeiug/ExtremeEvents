@@ -104,13 +104,6 @@ class ReadRasters:
     def total_test(self):
         return int(np.ceil(self.n_test_data/self.batch_size))
 
-    def next(self)->torch.Tensor:
-        with self.lock:
-            Thread(target=self._read_next, daemon=True, name=f"{self.step}").start()
-            sleep(0.5) # Tempo para setar o lock
-
-            return self.buffer
-
     def reset(self):
         self.step = 0
         self.indexes = np.arange(len(self.date_range))
@@ -123,6 +116,13 @@ class ReadRasters:
 
         self.train_indexes = self.indexes[0:self.n_train_data]
         self.test_indexes  = self.indexes[self.n_train_data:]
+
+    def next(self)->torch.Tensor:
+        with self.lock:
+            Thread(target=self._read_next, daemon=True, name=f"{self.step}").start()
+            sleep(0.5) # Tempo para setar o lock
+
+            return self.buffer
 
     def _read_next(self)->torch.Tensor:
         # Sinaliza que a leitura está em andamento

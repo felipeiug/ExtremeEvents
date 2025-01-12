@@ -130,7 +130,7 @@ for i in range(n_dias):
     saidas[f"R_t{i}"] = []
     saidas[f"P_t{i}"] = []
 
-for ciclo in tqdm(range(reader.total_train()), total=reader.total_train(), desc=f"Processando dados treindos"):
+for ciclo in tqdm(range(reader.total()), total=reader.total(), desc=f"Processando dados treindos"):
     X, y = reader.next()
 
     if device != "cuda":

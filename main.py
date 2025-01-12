@@ -1,15 +1,15 @@
+from run_models import *
+
 import os
 import io
 import torch.version
 from tqdm import tqdm
 from neuronios.NN import Rede3, Rede, Rede2
 from datareader.data_reader import ReadRasters
-from erros.metricas import CustomLoss, CustomLoss2
+from erros.metricas import CustomLoss2
 
 import torch
-import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 
 # Apenas para gerar os resultados
 # from run_models import *
