@@ -239,6 +239,95 @@ class CustomLoss2(nn.Module):
         return final_error
 
 
+# NASH ERROR:
+def NSE(y_pred, y_true):
+    """
+    Calcula o índice de eficiência de Nash-Sutcliffe (NSE).
+    
+    Args:
+        y_true (torch.Tensor): Valores observados (reais).
+        y_pred (torch.Tensor): Valores previstos (predições).
+    
+    Returns:
+        torch.Tensor: Métrica NSE.
+    """
+    # Calcula o termo do numerador (erros ao quadrado entre predições e valores reais)
+    numerator = torch.sum((y_true - y_pred) ** 2)
+    
+    # Calcula o termo do denominador (variância dos valores reais em relação à média)
+    denominator = torch.sum((y_true - torch.mean(y_true)) ** 2)
+    
+    # Evitar divisão por zero no denominador
+    if denominator == 0:
+        return -99
+    
+    # Calcula o NSE
+    nse = 1 - (numerator / denominator)
+    return nse
+
+#MAE ERROR:
+def MAE(y_pred, y_true):
+    """
+    Compute Mean Absolute Error (MAE).
+    y_true: torch.Tensor of actual/observed values
+    y_pred: torch.Tensor of predicted values
+    """
+    mae = torch.mean(torch.abs(y_true - y_pred))
+    return mae.item()  # Convert tensor to scalar value
+
+# R2
+def R2(y_pred, y_true):
+    """
+    Calcula o coeficiente de determinação (R²).
+    
+    Args:
+        y_true (torch.Tensor): Valores reais.
+        y_pred (torch.Tensor): Valores previstos.
+    
+    Returns:
+        torch.Tensor: R².
+    """
+    # Calcula o erro residual (numerador)
+    ss_res = torch.sum((y_true - y_pred) ** 2)
+    
+    # Calcula o total de variação (denominador)
+    ss_tot = torch.sum((y_true - torch.mean(y_true)) ** 2)
+    
+    # Evitar divisão por zero no denominador
+    if ss_tot == 0:
+        return -99
+    
+    # Calcula o R²
+    r2 = 1 - (ss_res / ss_tot)
+    return r2
+
+# PBIAS
+def PBIAS(y_pred, y_true):
+    """
+    Calcula o Percent Bias (PBIAS).
+    
+    Args:
+        y_true (torch.Tensor): Valores reais.
+        y_pred (torch.Tensor): Valores previstos.
+    
+    Returns:
+        float: Valor do PBIAS em porcentagem.
+    """
+    # Numerador: Soma das diferenças entre valores reais e previstos
+    numerator = torch.sum(y_true - y_pred)
+    
+    # Denominador: Soma dos valores reais
+    denominator = torch.sum(y_true)
+    
+    # Evitar divisão por zero
+    if denominator == 0:
+        return -99
+    
+    # Calcular PBIAS
+    pbias_value = 100 * numerator / denominator
+    return pbias_value.item()
+
+
 
 
 

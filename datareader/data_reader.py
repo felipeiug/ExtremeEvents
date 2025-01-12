@@ -132,7 +132,10 @@ class ReadRasters:
         saidas = torch.full((self.batch_size, self.n_days), self.null_value, device="cuda", dtype=torch.float32)
 
         for batch in range(self.batch_size):
-            index = self.indexes[self.step]
+            if self.train_indexes.shape[0] <= self.step:
+                break
+
+            index = self.train_indexes[self.step]
             actual_date = self.date_range[index]
             dates = pd.date_range(actual_date-timedelta(days=self.n_times-1), actual_date)
             dates_saida = pd.date_range(actual_date+timedelta(days=1), actual_date+timedelta(days=self.n_days))
