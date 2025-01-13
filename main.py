@@ -1,5 +1,5 @@
-from run_models import *
-exit()
+# from run_models import *
+# exit()
 
 import os
 import io
@@ -27,7 +27,8 @@ if torch.cuda.is_available():
 else:
     print("CUDA não está disponível.")
 
-modelo = 2     # Modelo utilizado no teste
+modelo = 4     # Modelo utilizado no teste
+min_date = "2023-01-01" # Data mínima para treino
 batch_size = 3 # Processamento em paralelo
 n_dias = 5     # Número de dias no futuro da previsão
 n_temp = 10    # Número de tempos no passado LSTM (dias)
@@ -53,6 +54,8 @@ reader = ReadRasters(
     n_days=n_dias,
     train_percent=0.8,
     randomize=False,
+    min_date=min_date,
+    normalize=False,
 )
 
 print(f"Criando RNA com o modelo {modelo}")
@@ -90,15 +93,28 @@ elif modelo == 3:
         bandas_time = bandas_time,
         null_val    = -99
     )
+elif modelo == 4:
+    cnn_lstm = Rede2(
+        batch_size  = batch_size,
+        n_dias      = n_dias,
+        n_tempos    = n_temp,
+        n_bandas    = n_data,
+        div_out     = div_out,
+        size_x      = size_x,
+        size_y      = size_y,
+        bandas_time = bandas_time,
+    )
+
 
 
 print("Criando Otimizador")
-optimizer = optim.AdamW(cnn_lstm.parameters(), lr=0.001, weight_decay=0.05)
+optimizer = optim.Adam(cnn_lstm.parameters(), lr=0.001)
 
 loss = 0
 start_epoch = 0
 last_losses = []
 
+os.makedirs(f"modelos_{modelo}", exist_ok=True)
 if load:
     print("Importando modelos treinados")
     modelos = os.listdir(f"modelos_{modelo}")

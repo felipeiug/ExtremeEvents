@@ -14,7 +14,7 @@ class ReadRasters:
     lock = Lock()   # Lock para sincronização
     buffer = None
 
-    def __init__(self, n_days, data_path, data_grid, n_bandas, uso_solo_path, elevation_file, declive_file,  batch_size, n_times, train_percent, randomize=True, null_value = -99):
+    def __init__(self, n_days, data_path, data_grid, n_bandas, uso_solo_path, elevation_file, declive_file,  batch_size, n_times, train_percent, min_date="2000-01-01", normalize=True, randomize=True, null_value = -99):
         """
         Os dados do dia N são os dados do dia N-1 ao dia `N-1-n_times`
         Todos os dias sem dados serão substituidos por uma matriz equivalente com os valores null_value em todo os 
@@ -32,31 +32,51 @@ class ReadRasters:
         self.grid = data_grid
         self.n_bandas = n_bandas
         self.n_days = n_days
+        self.min_date = pd.to_datetime(min_date)
 
         # Valores maximos e mínimos de cada banda
-        self.max_mins = [
-            [0, 400],    # Chuva
-            [0, 5000],   # Vazão
-            [0, 5000],   # Cota
-            [-10, 40],   # Temperatura
-            [0, 100],    # Umidade (0 a 100%)
-            [0, 360],    # Dir. Vento
-            [-10, 30],   # Ponto Orvalho
-            [700, 1200], # Pressão
-            [-10, 5000], # Radiação
-            [0, 20],     # Velocidade do vento
-            [pd.to_datetime("2000-01-01").timestamp(), pd.to_datetime("2024-12-31").timestamp()], # Data Min e Max
-            [0, 1],      # Uso do solo não mudará (0, 1), categórico
-            [0, 9E6],    # Declividade
-            [-2, 1500],  # Altitude
-        ]
+        if normalize:
+            self.max_mins = [
+                [0, 400],    # Chuva
+                [0, 5000],   # Vazão
+                [0, 5000],   # Cota
+                [-10, 40],   # Temperatura
+                [0, 100],    # Umidade (0 a 100%)
+                [0, 360],    # Dir. Vento
+                [-10, 30],   # Ponto Orvalho
+                [700, 1200], # Pressão
+                [-10, 5000], # Radiação
+                [0, 20],     # Velocidade do vento
+                [self.min_date.timestamp(), pd.to_datetime("2024-12-31").timestamp()], # Data Min e Max
+                [0, 1],      # Uso do solo não mudará (0, 1), categórico
+                [0, 9E6],    # Declividade
+                [-2, 1500],  # Altitude
+            ]
+        else:
+            self.max_mins = [
+                [0, 1], # Chuva
+                [0, 1], # Vazão
+                [0, 1], # Cota
+                [0, 1], # Temperatura
+                [0, 1], # Umidade (0 a 100%)
+                [0, 1], # Dir. Vento
+                [0, 1], # Ponto Orvalho
+                [0, 1], # Pressão
+                [0, 1], # Radiação
+                [0, 1], # Velocidade do vento
+                [0, 1], # Data Min e Max
+                [0, 1], # Uso do solo
+                [0, 1], # Declividade
+                [0, 1], # Altitude
+            ]
+            
 
         # Dados da cota no ponto de estudo
         self.cotas = pd.read_csv(r"D:\Mestrado\2º Semestre\Extreme Events\Codigos2\dados\dados.csv", low_memory=False)
         self.cotas.codigo = self.cotas.codigo.astype(str)
         self.cotas = self.cotas[(self.cotas.codigo == '87450005') & (self.cotas.tipo == "cota")]
         self.cotas = self.cotas[['date', 'value']]
-        self.cotas.value = self.cotas.value.copy()/500 # Normalizando de 0 a 500 para 0 a 1
+        self.cotas.value = self.cotas.value.copy()/(500 if normalize else 1) # Normalizando de 0 a 500 para 0 a 1
         self.cotas.loc[self.cotas["value"] < 0, "value"] = self.null_value
         self.cotas.date = pd.to_datetime(self.cotas.date)
 
@@ -107,6 +127,8 @@ class ReadRasters:
     def reset(self):
         self.step = 0
         self.indexes = np.arange(len(self.date_range))
+
+        self.indexes = self.indexes[self.date_range >= self.min_date]
 
         if(self.randomize):
             np.random.shuffle(self.indexes)
