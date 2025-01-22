@@ -5,8 +5,8 @@ import os
 import io
 import torch.version
 from tqdm import tqdm
-from neuronios.NN import Rede3, Rede, Rede2
-from datareader.data_reader import ReadRasters
+from neuronios.NN import *
+from datareader.data_reader2 import ReadRasters
 from erros.metricas import CustomLoss2
 
 import torch
@@ -17,7 +17,7 @@ import torch.optim as optim
 
 os.system("cls")
 
-load = True # Se irei utilizar o modelo salvo
+load = False # Se irei utilizar o modelo salvo
 device = "cpu"
 torch.set_default_dtype(torch.float32)
 
@@ -28,11 +28,10 @@ else:
     print("CUDA não está disponível.")
 
 modelo = 4     # Modelo utilizado no teste
-min_date = "2023-01-01" # Data mínima para treino
+min_date = "2000-01-01" # Data mínima para treino
 batch_size = 3 # Processamento em paralelo
-n_dias = 5     # Número de dias no futuro da previsão
+n_dias = 7     # Número de dias no futuro da previsão
 n_temp = 10    # Número de tempos no passado LSTM (dias)
-n_data = 14    # Número de bandas no raster <- Bandas dos rasters de dados, data, uso do solo, declividade e altitude
 div_out = 4    # Os tamanhos X e Y serão dividos por div_out na convolução
 size_x = 694   # Dimensão X do raster
 size_y = 1198  # Dimensão Y do raster
@@ -45,7 +44,6 @@ print("Criando Leitor de Rasters")
 reader = ReadRasters(
     data_path=r"D:\Mestrado\2º Semestre\Extreme Events\Codigos2\rasters",
     data_grid=(size_x, size_y),
-    n_bandas = n_data,
     uso_solo_path=r"D:\Mestrado\2º Semestre\Extreme Events\Codigos2\uso_solo_reshape",
     elevation_file=r"D:\Mestrado\2º Semestre\Extreme Events\Codigos2\elevacao\elevacao.tif",
     declive_file=r"D:\Mestrado\2º Semestre\Extreme Events\Codigos2\elevacao\declividade.tif",
@@ -94,21 +92,15 @@ elif modelo == 3:
         null_val    = -99
     )
 elif modelo == 4:
-    cnn_lstm = Rede2(
-        batch_size  = batch_size,
-        n_dias      = n_dias,
-        n_tempos    = n_temp,
-        n_bandas    = n_data,
-        div_out     = div_out,
+    cnn_lstm = Rede4(
+        n_future      = n_dias,
+        n_past    = n_temp,
         size_x      = size_x,
         size_y      = size_y,
-        bandas_time = bandas_time,
     )
 
-
-
 print("Criando Otimizador")
-optimizer = optim.Adam(cnn_lstm.parameters(), lr=0.001)
+optimizer = optim.AdamW(cnn_lstm.parameters(), lr=0.001)
 
 loss = 0
 start_epoch = 0
@@ -156,19 +148,16 @@ while True:
     for step in progress_bar:
         X, y = reader.next()
 
-        if not (y == -99).any().item():
-            if device != "cuda":
-                X = X.to(device="cpu")
-                y = y.to(device="cpu")
+        # if not (y == -99).any().item(): TODO: Mexer aqui
 
-            # Forward pass
-            outputs = cnn_lstm(X)
-            loss = criterion(outputs, y)
-            
-            # Backward pass e otimização
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        # Forward pass
+        outputs = cnn_lstm(X)
+        loss = criterion(outputs, y)
+        
+        # Backward pass e otimização
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
         description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items()])
         description += f" | Epoch: {epoch}"

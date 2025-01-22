@@ -277,3 +277,197 @@ class Rede3(nn.Module):
         # Caso precise fazer algo no forward static
         return input
 
+# Definir a CNN
+class Rede4(nn.Module):
+    def __init__(
+            self,
+            batch_first = True,
+            n_future=7, n_past = 10,
+            size_x = 1200,
+            size_y = 1200,
+            null_val = -99,
+            cnn_config = None
+        ):
+        super(Rede4, self).__init__()
+
+        self.n_future = n_future
+        self.batch_first = batch_first
+        self.n_past = n_past
+        self.size_x = size_x
+        self.size_y = size_y
+        self.null_value = null_val
+
+        self.dtype = torch.float32
+
+        if cnn_config is None:
+            cnn_config = [
+                {
+                    "type":"Conv2d",
+                    "out_channels": 15,
+                    "kernel_size": 2,
+                    "stride": 2,
+                    "padding": 0,
+                    "dilation": 1,
+                },
+                {
+                    "type":"Sigmoid"
+                },
+                {
+                    "type":"MaxPool2d",
+                    "kernel_size":2,
+                    "stride": 2,
+                    "padding": 0,
+                    "dilation": 1,
+                },
+                {
+                    "type":"Conv2d",
+                    "out_channels": 8,
+                    "kernel_size": 2,
+                    "stride": 2,
+                    "padding": 0,
+                    "dilation": 1,
+                },
+                {
+                    "type":"Sigmoid",
+                },
+                {
+                    "type":"Conv2d",
+                    "out_channels": 2,
+                    "kernel_size": 2,
+                    "stride": 2,
+                    "padding": 0,
+                    "dilation": 1,
+                },
+                {
+                    "type":"Sigmoid",
+                },
+            ]
+
+        # Configurações das camadas CNN
+        camadas_cnn = []
+        out_x = size_x
+        out_y = size_y
+        out_channels = 48
+        for value in cnn_config:
+            tipo = value.pop("type")
+            camada = getattr(nn, tipo)
+
+            if 'out_channels' in value:
+                value["in_channels"] = out_channels
+
+            try:
+                out_x, out_y = self._calc_cnn_out(out_x, out_y, **value)
+            except TypeError as e:
+                pass
+
+            camadas_cnn.append(camada(**value))
+
+            if 'out_channels' in value:
+                out_channels = value['out_channels']
+        self.cnn = nn.Sequential(*camadas_cnn).to(dtype=self.dtype)
+        
+        # Tamanho do vetor de saída
+        self.out_x = out_x
+        self.out_y = out_y
+        self.out_channels = out_channels
+
+        ##### LSTM's das camadas dinâmicas (1 LSTM para cada banda dinâmica) #####
+
+        # Sem significado fisíco, pois passou pela convolução
+        self.lstm_chuva = nn.LSTM(
+            input_size=1,
+            batch_first=True,
+            hidden_size=50,
+        )
+        self.lstm_vazao = nn.LSTM(
+            input_size=1,
+            batch_first=True,
+            hidden_size=50,
+        )
+
+        # Com significado fisíco, não passou pela convolução
+        self.lstm_temp = nn.LSTM(
+            input_size=1,
+            batch_first=True,
+            hidden_size=50,
+        )
+        self.lstm_umidade = nn.LSTM(
+            input_size=1,
+            batch_first=True,
+            hidden_size=50,
+        )
+        self.lstm_pressao = nn.LSTM(
+            input_size=1,
+            batch_first=True,
+            hidden_size=50,
+        )
+        self.lstm_radiacao = nn.LSTM(
+            input_size=1,
+            batch_first=True,
+            hidden_size=50,
+        )
+
+        # Camadas lineares
+        self.flatten_size = 19
+        
+        self.linear = nn.Sequential(*[
+            nn.Linear(in_features=self.flatten_size, out_features=64).to(dtype=self.dtype),
+            nn.Sigmoid(),
+            nn.Linear(in_features=64, out_features=64).to(dtype=self.dtype),
+            nn.Sigmoid(),
+            nn.Linear(in_features=64, out_features=32).to(dtype=self.dtype),
+            nn.ReLU(),
+            nn.Linear(in_features=64, out_features=32).to(dtype=self.dtype),
+            nn.Sigmoid(),
+            nn.Linear(in_features=32, out_features=16).to(dtype=self.dtype),
+            nn.Sigmoid(),
+            nn.Linear(in_features=16, out_features=n_future).to(dtype=self.dtype)
+
+        ])
+    
+    def _calc_cnn_out(self, h_in, w_in, kernel_size, stride, padding, dilation, **kwargs):
+        h = ((h_in + (2*padding) - (dilation * (kernel_size-1)) - 1)/stride) + 1
+        w = ((w_in + (2*padding) - (dilation * (kernel_size-1)) - 1)/stride) + 1
+        return (int(h), int(w))
+
+
+    def forward(self, input:tuple[torch.Tensor]):
+        matrix = input[0]
+        linear = input[1]
+
+        x_matrix = self.cnn(matrix)
+        x_matrix[x_matrix == self.null_value] = torch.nan
+
+        x_chuva = x_matrix[:, 0]
+        x_chuva = x_chuva.nanmean(dim=(3, 4)).unsqueeze(-1)
+
+        x_vazao = x_matrix[:, 1]
+        x_vazao = x_vazao.nanmean(dim=(3, 4)).unsqueeze(-1)
+
+        x_chuva    = self.lstm_chuva(linear[:, :, 0])
+        x_vazao    = self.lstm_vazao(linear[:, :, 0])
+        x_temp     = self.lstm_temp(linear[:, :, 0])
+        x_umidade  = self.lstm_umidade(linear[:, :, 1])
+        x_pressao  = self.lstm_pressao(linear[:, :, 2])
+        x_radiacao = self.lstm_radiacao(linear[:, :, 3])
+
+        input[input == self.null_value] = torch.nan
+        mean = input.nanmean(dim=(3, 4)).unsqueeze(-1)
+        for band in range(self.n_bandas_dynamic):
+            out, _ = self.lstm_dynamic[band](mean[:, :, band])
+            out = out[:, -1, -1]
+            saidas[:, band] = out
+
+        # Rede neural totalmente conectada com um vetor de entrada
+        x = x.view(self.batch_size, self.n_bandas * self.out_x * self.out_y).to(dtype=self.dtype)
+        x = torch.cat([x, x_dynamic], dim=1).to(dtype=self.dtype)
+
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.relu1(x)
+        x = self.fc3(x)
+        x = self.fc4(x)
+        x = self.fc5(x)
+
+        return x
+
