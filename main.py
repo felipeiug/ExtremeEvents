@@ -7,7 +7,7 @@ import torch.version
 from tqdm import tqdm
 from neuronios.NN import *
 from datareader.data_reader2 import ReadRasters
-from erros.metricas import CustomLoss2
+from erros.metricas import CustomLoss3
 
 import torch
 import torch.optim as optim
@@ -130,7 +130,12 @@ if load:
 
 # Métrica de Erro
 print("Criando Métricas de Erro")
-criterion = CustomLoss2(reader.mean_cotas, last_losses=last_losses, start_epoch=start_epoch).to(torch.float32)
+criterion = CustomLoss3(
+    area_bacia=82448,
+    media=reader.mean_cotas,
+    last_losses=last_losses,
+    start_epoch=start_epoch
+).to(torch.float32)
 
 # Treinamento
 epoch = start_epoch
@@ -148,7 +153,8 @@ while True:
     for step in progress_bar:
         X, y = reader.next()
 
-        # if not (y == -99).any().item(): TODO: Mexer aqui
+        if (y[0] == -99).any().item():
+            continue
 
         # Forward pass
         outputs = cnn_lstm(X)
@@ -159,8 +165,9 @@ while True:
         loss.backward()
         optimizer.step()
 
-        description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items()])
-        description += f" | Epoch: {epoch}"
+        #description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items()])
+        description = f"LOSS: {criterion.erros["LOSS"]:.4g}"
+        description += f" | Epoch: {epoch+1}"
 
         progress_bar.set_description(description)
         criterion.print(buffer.getvalue())
