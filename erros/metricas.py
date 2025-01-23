@@ -349,10 +349,6 @@ class CustomLoss3(nn.Module):
         # Pesos para cada dia
         pesos_dia = [2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0] # 1 e 7 dia com mais importância
 
-        import time
-        time.sleep(10)
-        print("SLEEEEEPPPPPPPPPPPPP, Retirar")
-
         self.last_obs  = y_obs
         self.last_pred = y_pred
 

@@ -170,7 +170,7 @@ while True:
         description += f" | Epoch: {epoch+1}"
 
         progress_bar.set_description(description)
-        criterion.print(buffer.getvalue())
+        # criterion.print(buffer.getvalue())
 
     criterion.last_losses.append(criterion.erros["LOSS"])
 
