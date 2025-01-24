@@ -1,10 +1,15 @@
 import os
-import shutil
 import time
+import shutil
+
 import numpy as np
+import pandas as pd
+
 import torch
 import torch.nn as nn
 import asciichartpy
+
+from datetime import timedelta
 from scipy.optimize import curve_fit
 
 from tabulate import tabulate
@@ -271,7 +276,7 @@ class CustomLoss3(nn.Module):
     def stop(self):
         self.start_time = None
 
-    def print(self, step, total, description):
+    def print(self, step, total, description, date:pd.Timestamp):
         if self.start_time is None:
             print("É necessário iniciar o processo!")
             return
@@ -354,8 +359,10 @@ class CustomLoss3(nn.Module):
 
                 headers.append("Mean")
                 continue
+            
+            date_str = (date + pd.Timedelta(days=i)).strftime("%d/%m/%y")
+            headers.append(date_str)
 
-            headers.append(f"Dia {i}")
             i = i-1
             data[0].append(f"{self.last_obs[0][0][i]:.4g}")
             data[1].append(f"{self.last_pred[0][0][i]:.4g}")

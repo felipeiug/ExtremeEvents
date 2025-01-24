@@ -3,6 +3,7 @@
 # exit()
 
 import os
+import traceback
 import torch.version
 from neuronios.NN import *
 from datareader.data_reader2 import ReadRasters
@@ -148,25 +149,36 @@ while True:
     progress_bar = range(reader.total_train())
     criterion.start()
     for step in progress_bar:
-        X, y = reader.next()
+        try:
+            X, y = reader.next()
 
-        if (y[0] == -99).any().item():
-            continue
+            if (y[0] == -99).any().item():
+                continue
 
-        # Forward pass
-        outputs = cnn_lstm(X)
-        loss = criterion(outputs, y)
-        
-        # Backward pass e otimização
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            # Forward pass
+            outputs = cnn_lstm(X)
+            try:
+                loss = criterion(outputs, y)
+            except Exception as e:
+                continue
+            
+            # Backward pass e otimização
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        #description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items()])
-        description = f"LOSS: {criterion.erros["LOSS"]:.4g}"
-        description += f" | Epoch: {epoch+1}"
+            # Legenda
+            #description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items()])
+            description = f"LOSS: {criterion.erros["LOSS"]:.4g}"
+            description += f" | Epoch: {epoch+1}"
 
-        criterion.print(step, reader.total_train(), description)
+            date = reader.date_range[reader.train_indexes[(reader.step - reader.batch_size)]]
+
+            criterion.print(step, reader.total_train(), description, date)
+        except Exception as e:
+            traceback.print_exc()
+            print(e)
+            input("Pressione enter para continuar")
 
     criterion.stop()
     criterion.last_losses.append(criterion.erros["LOSS"])
