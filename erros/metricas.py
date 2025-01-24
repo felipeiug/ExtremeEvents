@@ -450,7 +450,7 @@ class CustomLoss3(nn.Module):
 
                 inf = Q1 - 1.5*IQR
                 sup = Q3 + 1.5*IQR
-                mask_outliers = (vaz_especifica <= sup) & (vaz_especifica >= inf) & (vaz_especifica < 0.055)
+                mask_outliers = (vaz_especifica <= sup) & (vaz_especifica >= inf)
 
                 params, _ = curve_fit(self._potencial, A[mask_outliers], vaz_especifica[mask_outliers], maxfev = 2000)
                 ajustes_pot[batch].append(params)

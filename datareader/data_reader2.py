@@ -148,6 +148,20 @@ class ReadRasters:
         self.n_days = n_days
         self.min_date = pd.to_datetime(min_date)
 
+        # Uso do solo
+        self.uso_solo = {}
+        usos_solo = os.listdir(self.uso_solo_path)
+        for uso in tqdm(usos_solo, desc="Lendo usos do solo", total=len(usos_solo)):
+            year = int(uso.split("_")[1].split(".")[0])
+
+            uso_solo = self._read_raster(self.uso_solo_path + "/" + uso)
+            uso_solo[(uso_solo==0)] = 27 # Valor sem observação
+            uso_solo = torch.where(uso_solo >= 90, self.null_value, uso_solo)
+
+            self.uso_solo[year] = uso_solo
+
+        self.tipos_uso_solo = torch.tensor(list(uso_solo_legenda.keys()), device=uso_solo.device, dtype=uso_solo.dtype)
+
         # Valores maximos e mínimos de cada banda
         if normalize:
             self.max_mins = [
@@ -270,7 +284,7 @@ class ReadRasters:
             sleep(0.5) # Tempo para setar o lock
             return self.buffer
 
-    def _read_next(self) -> torch.Tensor:
+    def _read_next(self)->torch.Tensor:
         """### Formato dos dados:
         Os dados serão retornados em dois tensores, o primeiro contendo os dados de entrada e o segundo a saída esperada do modelo
         #### Entrada:
@@ -293,42 +307,102 @@ class ReadRasters:
         # Sinaliza que a leitura está em andamento
         self.lock.acquire()
 
-        # Inicialização na GPU
+        # Criando as variáveis na memória (mais eficiente)
         matrix_data = torch.full((self.batch_size, self.n_times, 4 + len(uso_solo_legenda), self.grid[0], self.grid[1]), self.null_value, device="cuda", dtype=torch.float32)
-        vetor_data = torch.full((self.batch_size, self.n_times, 17), self.null_value, device="cuda", dtype=torch.float32)
+        vetor_data  = torch.full((self.batch_size, self.n_times, 17), self.null_value, device="cuda", dtype=torch.float32)
+        vetor_data[:, :, 5:18] = 0
         cotas = torch.full((self.batch_size, self.n_days), self.null_value, device="cuda", dtype=torch.float32)
+        
+        Q = []
+        A = []
+        for i in range(self.batch_size):
+            Q.append([])
+            A.append([])
+            for j in range(self.n_days):
+                Q[i].append([])
+                A[i].append([])
 
-        # Processamento por batch
         for batch in range(self.batch_size):
             if self.train_indexes.shape[0] <= self.step:
                 break
+            
+            # Data de Processamento
+            actual_date:pd.DatetimeIndex = self.date_range[self.train_indexes[self.step]]
 
-            actual_date = self.date_range[self.train_indexes[self.step]]
+            ### Uso do solo
+            uso_solo = self.uso_solo[actual_date.year]
+            uso_solo = uso_solo.to(torch.float32)
 
-            # Uso do solo (vetorizado)
-            uso_solo = self._read_raster(self.uso_solo_path + f"/output_{actual_date.year}.tif").to(torch.float32)
-            uso_solo[uso_solo == 0] = 27
-            uso_solo = torch.where(uso_solo >= 90, self.null_value, uso_solo)
+            # Para cada passo de tempo em cada posição da matriz e para cada tipo de uso do solo,
+            # atribuo 1 para contém e 0 para não contém
 
-            # Adicionando dados de uso do solo
-            matrix_data[batch, :, 4:] = torch.stack([(uso_solo == tipo).to(torch.float32) for tipo in uso_solo_legenda.keys()])
+            # Converte as chaves de uso_solo_legenda em um tensor
+            mascaras = (uso_solo.unsqueeze(0) == self.tipos_uso_solo.view(-1, 1, 1)).to(torch.float32)
+            matrix_data[batch, :, 4:4 + len(uso_solo_legenda)] = mascaras
 
-            # Criando vetor de anos e meses
-            dates = pd.date_range(actual_date - timedelta(days=self.n_times - 1), actual_date)
-            years = torch.tensor([date.year - 2000 for date in dates], device="cuda")
-            months = torch.tensor([date.month for date in dates], device="cuda")
-            vetor_data[batch, :, 4] = years
-            vetor_data[batch, :, 5 + months - 1] = 1
+            # Data dos dados de entrada e saída
+            dates = pd.date_range(actual_date-timedelta(days=self.n_times-1), actual_date)
+            dates_saida = pd.date_range(actual_date+timedelta(days=1), actual_date+timedelta(days=self.n_days))
 
-            # Atualizando cotas e Q
-            # (paralelismo e vetorização podem ser aplicados aqui)
+            del actual_date
+
+            # Obtendo os valores dos rasteres
+            falha = False
+            dados_day = None
+            
+            for n, date in enumerate(dates):
+                filename = date.strftime("%Y-%m-%d") + ".tiff"
+                if filename not in self.files:
+                    falha = True
+                    break
+
+                # Declividade e altitude
+                matrix_data[batch, n, 2] = self.declividade
+                matrix_data[batch, n, 3] = self.altitude
+
+                # Lendo arquivo de dados
+                dados_day = self._read_raster(self.data_path + "/" + filename)
+                
+                # Dados da Matriz
+                matrix_data[batch, n, 0:2] = dados_day[0:2]
+
+                # Substituindo nulos por nan
+                dados_day[dados_day == self.null_value] = torch.nan
+            
+                # Temp. Méd. (B04) | Umidade Med. (B05) | Pressão Med. (B08) | Radiação Med. (B09)
+                vetor_data[batch, n, :4] = torch.nanmean(dados_day[3:7], dim=(1, 2))
+
+                # Data
+                vetor_data[batch, n, 4] = (date.year-2000)
+                vetor_data[batch, n, 4+date.month] = 1
+
+            del dados_day, n, date, dates
+            
+
+            # Dados de Saída
+            if not falha:
+                for n, date in enumerate(dates_saida):
+                    cota_date = self.cotas[self.cotas.date == date]
+                    vazoes_date = self.vazoes[self.vazoes.date == date]
+
+                    if cota_date.empty:
+                        raise ValueError("Valor vazio aqui")
+                    
+                    cotas[batch, n] = torch.tensor(cota_date.value.values[0], device="cuda")
+
+                    if not vazoes_date.empty:
+                        Q[batch][n] = vazoes_date.value.values
+                        A[batch][n] = vazoes_date.area.values
+
+                del n, date, cota_date, vazoes_date
 
             self.step += 1
 
         self.buffer = ((matrix_data, vetor_data), (cotas, Q, A))
+
+        # Sinaliza que a leitura foi concluída
         self.lock.release()
 
-    
     def _read_raster(self, raster):
         data_raster = rioxarray.open_rasterio(raster)
         dados = torch.from_numpy(data_raster.values)

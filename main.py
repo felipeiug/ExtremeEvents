@@ -1,3 +1,4 @@
+# Apenas para gerar os resultados
 # from run_models import *
 # exit()
 
@@ -12,8 +13,6 @@ from erros.metricas import CustomLoss3
 import torch
 import torch.optim as optim
 
-# Apenas para gerar os resultados
-# from run_models import *
 
 os.system("cls")
 
@@ -170,7 +169,7 @@ while True:
         description += f" | Epoch: {epoch+1}"
 
         progress_bar.set_description(description)
-        # criterion.print(buffer.getvalue())
+        criterion.print(buffer.getvalue())
 
     criterion.last_losses.append(criterion.erros["LOSS"])
 
