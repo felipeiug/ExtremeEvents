@@ -399,9 +399,8 @@ class Rede4(nn.Module):
             nn.Linear(in_features=64, out_features=32).to(dtype=self.dtype),
             nn.ReLU(),
             nn.Linear(in_features=32, out_features=32).to(dtype=self.dtype),
-            nn.Sigmoid(),
+            nn.ReLU(),
             nn.Linear(in_features=32, out_features=16).to(dtype=self.dtype),
-            nn.Sigmoid(),
             nn.Linear(in_features=16, out_features=n_future).to(dtype=self.dtype)
         ])
     
