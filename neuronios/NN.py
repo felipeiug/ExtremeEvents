@@ -374,7 +374,7 @@ class Rede4(nn.Module):
         # Camada que obtém a partir da convolução um valor estimado de vazão média
         self.linear_vazao = nn.Sequential(*[
             nn.Linear(in_features=out_x*out_y, out_features=32).to(dtype=self.dtype),
-            nn.Sigmoid(),
+            nn.ReLU(),
             nn.Linear(in_features=32, out_features=16).to(dtype=self.dtype),
             nn.ReLU(),
             nn.Linear(in_features=16, out_features=1).to(dtype=self.dtype),
