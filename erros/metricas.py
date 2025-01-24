@@ -1,10 +1,11 @@
 import os
+import shutil
+import time
 import numpy as np
 import torch
 import torch.nn as nn
 import asciichartpy
 from scipy.optimize import curve_fit
-from scipy import stats
 
 from tabulate import tabulate
 
@@ -264,7 +265,16 @@ class CustomLoss3(nn.Module):
         self.last_pred = torch.tensor([[1]])
         self.last_obs  = torch.tensor([[1]])
 
-    def print(self, progress):
+    def start(self):
+        self.start_time = time.time()
+
+    def stop(self):
+        self.start_time = None
+
+    def print(self, step, total, description):
+        if self.start_time is None:
+            print("É necessário iniciar o processo!")
+            return
 
         # x = range(0, self.epoch)
         list_data = self.last_losses.copy()
@@ -278,6 +288,49 @@ class CustomLoss3(nn.Module):
             'min':0,
             'format':'{:.4g}'
         })
+
+        # Alterando a primeira coluna do chart:
+        lines = chart.split("\n")
+        new_chart = ""
+        max_size = 0
+        for line in lines:
+            start = line.split("┤")[0].split("┼")[0]
+            if len(start) > max_size:
+                max_size = len(start)
+        
+        for line in lines:
+            start = line.split("┤")[0].split("┼")[0]
+            diff = (max_size - len(start))
+            new_chart += " " * diff
+            new_chart += line[0:len(line)]
+            new_chart += "\n"
+        chart = new_chart
+
+        ### Barra de progresso ###
+
+        # Obter a largura do terminal
+        terminal_width = shutil.get_terminal_size().columns
+        progress = step / total
+        percentage = int(progress * 100)
+
+        description += f" {percentage}% ["
+
+        # Tempo de processamento
+        elapsed_time = time.time() - self.start_time
+        time_per_item = elapsed_time / step if step > 0 else 0
+        total_time = time_per_item * total
+
+        text_after = f"] {step}/{total} [{self._time_to_str(elapsed_time)}<{self._time_to_str(total_time)}, {time_per_item:.2f}s/item]"
+
+        # Exibir a barra
+
+        bar_width = max(terminal_width - len(text_after) - len(description), 10)  # Garantir no mínimo 10 caracteres para a barra
+        filled_length = int(bar_width * progress)
+
+        # Criar a barra de progresso
+        bar = "█" * filled_length + "-" * (bar_width - filled_length)
+
+        progress_bar = description + bar + text_after
 
         #       Cota Obs. Cota Sim. Vaz Obs., Vaz Sim
         data = [[], [], [], []]
@@ -321,10 +374,15 @@ class CustomLoss3(nn.Module):
         os.system("cls")
         print(chart)
         print()
-        print(progress)
+        print(progress_bar)
         print()
         print(table)
 
+    def _time_to_str(self, time):
+        hours = int(time // 3600)
+        minutes = int((time % 3600) // 60)
+        seconds = int(time % 60)
+        return f"{hours:02}:{minutes:02}:{seconds:02}"
 
     def forward(self, y_pred:tuple[torch.Tensor], y_obs:tuple[torch.Tensor]):
         """

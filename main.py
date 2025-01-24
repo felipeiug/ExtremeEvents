@@ -3,9 +3,7 @@
 # exit()
 
 import os
-import io
 import torch.version
-from tqdm import tqdm
 from neuronios.NN import *
 from datareader.data_reader2 import ReadRasters
 from erros.metricas import CustomLoss3
@@ -147,8 +145,8 @@ while True:
     criterion.epoch = epoch
     criterion.losses_epoch = []
 
-    buffer = io.StringIO()
-    progress_bar = tqdm(range(reader.total_train()), file=buffer, total=reader.total_train(), desc=f"LOSS: {loss:.4g} | Epoch: {epoch}")
+    progress_bar = range(reader.total_train())
+    criterion.start()
     for step in progress_bar:
         X, y = reader.next()
 
@@ -168,9 +166,9 @@ while True:
         description = f"LOSS: {criterion.erros["LOSS"]:.4g}"
         description += f" | Epoch: {epoch+1}"
 
-        progress_bar.set_description(description)
-        criterion.print(buffer.getvalue())
+        criterion.print(step, reader.total_train(), description)
 
+    criterion.stop()
     criterion.last_losses.append(criterion.erros["LOSS"])
 
     dados_save = {
