@@ -391,7 +391,7 @@ class CustomLoss3(nn.Module):
         seconds = int(time % 60)
         return f"{hours:02}:{minutes:02}:{seconds:02}"
 
-    def forward(self, y_pred:tuple[torch.Tensor], y_obs:tuple[torch.Tensor]):
+    def forward(self, y_pred:tuple[torch.Tensor], y_obs:tuple[torch.Tensor])->torch.Tensor:
         """
         Calcula a perda.
         Args:
@@ -401,18 +401,12 @@ class CustomLoss3(nn.Module):
             Tensor: Escalar representando a perda.
         """
 
+        # Erro final
+        sum_erro = torch.tensor(0.0, device=y_pred[0].device)
+
         # Pesos
-        mse_cota  = 2.0
-        mse_vazao = 2.0
-
-        min_0_cota  = 1.0
-        min_0_vazao = 1.0
-
-        major_cota = 1.0
-        major_vazao = 1.0
-
-        # Pesos para cada dia
-        pesos_dia = [2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0] # 1 e 7 dia com mais importância
+        pesos_cota = torch.tensor([2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0], device=y_pred[0].device)
+        pesos_vazao = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], device=y_pred[0].device)
 
         self.last_obs  = y_obs
         self.last_pred = y_pred
@@ -434,59 +428,53 @@ class CustomLoss3(nn.Module):
             vazao
         )
 
-        erros = [] # Erro para cada dia na medição
-        for dia in range(y_obs[0].shape[1]):
-            # Valores simulados
-            cota_sim  = y_pred[0][:, dia]
-            vazao_sim = y_pred[1][:, dia]
+        ##### Cálculo do erro
 
-            # Valores reais
-            cota_obs = y_obs[0][:, dia]
-            vazao_obs = vazao[dia]
+        # Menores que 0
+        mask = (y_pred[0] < 0)
+        count = torch.sum(mask)
 
-            # Valor do erro
-            sum_erro = torch.tensor(0.0, requires_grad=True)
+        mask = (y_pred[1] < 0)
+        count = count + torch.sum(mask)
 
-            # Valores de cota estimados menores que 0
-            if cota_sim.min() < 0:
-                mask = (cota_sim < 0)
-                sum_erro = sum_erro + torch.pow(5, torch.sum(mask)) * min_0_cota
+        sum_erro = sum_erro + torch.pow(5, count)
 
-            # Valores de vazão estimados menores que 0
-            if vazao_sim.min() < 0:
-                mask = (vazao_sim < 0)
-                sum_erro = sum_erro + torch.pow(5, torch.sum(mask)) * min_0_vazao
+        # MSE Cota
+        mse_cota = torch.mean(torch.abs(y_pred[0] - y_obs[0]) ** 2, dim=0)
 
-            # Erros Cota
-            mse = MSE(cota_sim, cota_obs)
-            nse = NSE(cota_sim, cota_obs, self.media)
-            self.erros[f"NSE Cota T+{dia+1}"] = nse
-            self.erros[f"RMSE Cota T+{dia+1}"] = torch.sqrt(mse)
-            sum_erro = sum_erro + (mse * mse_cota)       # Aplicando pesos
-            if mse > 0.000005 and mse < 1 and nse < 0.3: # Majorando o ERRO da Cota quando ele for menor que 1 e maior que 0
-                sum_erro = sum_erro + (100 * major_cota)
-                
-            # Erros Vazão
-            mse = MSE(vazao_sim, vazao_obs)
-            nse = NSE(vazao_sim, vazao_obs, self.media)
-            self.erros[f"NSE Vazão T+{dia+1}"] = nse
-            self.erros[f"RMSE Vazão T+{dia+1}"] = torch.sqrt(mse)
-            sum_erro = sum_erro + (mse * mse_vazao)      # Aplicando pesos
-            if mse > 0.000005 and mse < 1 and nse < 0.3: # Majorando o ERRO da Vazão quando ele for menor que 1 e maior que 0
-                sum_erro = sum_erro + (100 * major_vazao)
+        # MSE Vazao
+        mse_vazao = torch.mean(torch.abs(y_pred[1] - vazao) ** 2, dim=0)
 
-            erros.append(sum_erro/(mse_cota + mse_vazao + min_0_cota + min_0_vazao + major_cota + major_vazao))
+        # NSE Cota
+        numerator = torch.sum((y_obs[0] - y_pred[0]) ** 2, dim=0)
+        denominator = torch.sum((y_obs[0] - self.media) ** 2, dim=0) + 1e-8 # Soma da constante para que o denominador não seja 0.
+        nse_cota = 1 - numerator / denominator
 
-        # Erro final
-        erros = torch.tensor(erros, requires_grad=True)
-        pesos_dia = torch.tensor(pesos_dia, requires_grad=True)
-        final_error = torch.sum(erros*pesos_dia)/torch.sum(pesos_dia)
+        mask = (mse_cota > 0.000005) & (mse_cota < 1) & (nse_cota < 0.3)
+        mse_cota[mask] = mse_cota[mask] + 100
 
-        self.losses_epoch.append(final_error)
+        # Aplicando os pesos do erro e realizando uma média ponderada
+        mse_cota = (mse_cota * pesos_cota)
+        mse_cota = torch.sum(mse_cota)/torch.sum(pesos_cota)
+        
+        mse_vazao = (mse_vazao * pesos_vazao)
+        mse_vazao = torch.sum(mse_vazao)/torch.sum(pesos_vazao)
+
+        # Somando os valores de mse
+        sum_erro = sum_erro + mse_cota + mse_vazao
+
+        if len(self.losses_epoch) > 1000:
+            self.losses_epoch.pop(0)
+        self.losses_epoch.append(sum_erro)
+        
         mean_loss = sum(self.losses_epoch)/max(1, len(self.losses_epoch))
         self.erros[f"LOSS"] = mean_loss
 
-        return final_error
+        self.erros["NSE COTA"] = torch.mean(nse_cota)
+        self.erros["MSE COTA"] = mse_cota
+        self.erros["MSE VAZAO"] = mse_vazao
+
+        return sum_erro
     
     def _linear(self, x, a, b):
         return a*x + b

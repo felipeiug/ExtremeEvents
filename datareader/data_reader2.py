@@ -314,7 +314,7 @@ class ReadRasters:
 
         try:
             # Criando as variáveis na memória (mais eficiente)
-            while True:
+            for i in range(10):
                 try:
                     matrix_data = torch.full((self.batch_size, self.n_times, 4 + len(uso_solo_legenda), self.grid[0], self.grid[1]), self.null_value, device="cuda", dtype=torch.float32)
                     vetor_data  = torch.full((self.batch_size, self.n_times, 17), self.null_value, device="cuda", dtype=torch.float32)
@@ -324,13 +324,20 @@ class ReadRasters:
                 except torch.OutOfMemoryError as e:
                     print("Aguardando memória na GPU")
                     sleep(1)
+            else:
+                self.buffer = (None, None)
+                
+                # Sinaliza que a leitura foi concluída
+                self.lock.release()
+
+                return
             
             Q = []
             A = []
             for i in range(self.batch_size):
                 Q.append([])
                 A.append([])
-                for j in range(self.n_days):
+                for j in range(self.n_times):
                     Q[i].append([])
                     A[i].append([])
 
@@ -388,6 +395,15 @@ class ReadRasters:
                     vetor_data[batch, n, 4] = (date.year-2000)
                     vetor_data[batch, n, 4+date.month] = 1
 
+                    # Vazões e áreas de drenagem
+                    vazoes_date = self.vazoes[self.vazoes.date == date]
+
+                    if not vazoes_date.empty:
+                        Q[batch][n] = vazoes_date.value.values
+                        A[batch][n] = vazoes_date.area.values
+
+                    del vazoes_date
+
                 del dados_day, n, date, dates
                 
 
@@ -395,18 +411,10 @@ class ReadRasters:
                 if not falha:
                     for n, date in enumerate(dates_saida):
                         cota_date = self.cotas[self.cotas.date == date]
-                        vazoes_date = self.vazoes[self.vazoes.date == date]
-
                         if cota_date.empty:
                             raise ValueError("Valor vazio aqui")
-                        
                         cotas[batch, n] = torch.tensor(cota_date.value.values[0], device="cuda")
-
-                        if not vazoes_date.empty:
-                            Q[batch][n] = vazoes_date.value.values
-                            A[batch][n] = vazoes_date.area.values
-
-                    del n, date, cota_date, vazoes_date
+                    del n, date, cota_date
 
                 self.step += 1
 

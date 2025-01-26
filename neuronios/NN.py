@@ -429,7 +429,7 @@ class Rede4(nn.Module):
             x = self.cnn(x)
             x = x.squeeze(dim=1)        # Shape: (batch, X, Y)
             x = x.view(batch_size, -1)  # Shape: (batch, X * Y)
-            x = self.linear_vazao(x)
+            x = self.linear_vazao(x)    # MLP das vazões
             x = x.squeeze()
             x_vazao[:, n] = x
         del x
@@ -453,6 +453,6 @@ class Rede4(nn.Module):
         x_linear[:, -2] = x_vazao[:, -1] # Dados do LSTM
         x_linear[:, -1] = x_lstm   # Dados da vazãoo estimada
 
-        x = self.linear(x_linear) # MLP
-
-        return x, x_vazao
+        x = self.linear(x_linear) # MLP das cotas
+        
+        return (x, x_vazao)

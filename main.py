@@ -15,7 +15,7 @@ import torch.optim as optim
 
 os.system("cls")
 
-load = False # Se irei utilizar o modelo salvo
+load = True # Se irei utilizar o modelo salvo
 device = "cpu"
 torch.set_default_dtype(torch.float32)
 
@@ -27,7 +27,7 @@ else:
 
 modelo = 4     # Modelo utilizado no teste
 min_date = "2000-01-01" # Data mínima para treino
-batch_size = 3 # Processamento em paralelo
+batch_size = 2 # Processamento em paralelo
 n_dias = 7     # Número de dias no futuro da previsão
 n_temp = 10    # Número de tempos no passado LSTM (dias)
 div_out = 4    # Os tamanhos X e Y serão dividos por div_out na convolução
@@ -151,6 +151,9 @@ while True:
     for step in progress_bar:
         try:
             X, y = reader.next()
+
+            if X is None and y is None:
+                continue
 
             if (y[0] == -99).any().item():
                 continue
