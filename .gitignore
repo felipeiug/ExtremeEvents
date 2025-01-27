@@ -7,6 +7,8 @@
 /modelos_6
 /modelos_7
 /modelos_8
+/modelos_cnn
+/modelos_lstm
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

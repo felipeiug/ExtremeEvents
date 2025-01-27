@@ -456,3 +456,142 @@ class Rede4(nn.Module):
         x = self.linear(x_linear) # MLP das cotas
         
         return (x, x_vazao)
+
+# Rede que transforma chuva, vazao e temperatura na vazão.
+class Rede5(nn.Module):
+    def __init__(
+            self,
+            batch_first = True,
+            n_future=7, n_past = 10,
+            size_x = 1200,
+            size_y = 1200,
+            null_val = -99,
+        ):
+        super(Rede5, self).__init__()
+
+        self.n_future = n_future
+        self.batch_first = batch_first
+        self.n_past = n_past
+        self.size_x = size_x
+        self.size_y = size_y
+        self.null_value = null_val
+
+        self.dtype = torch.float32
+
+        config_cnn = [
+            {
+                "type":"Conv2d",
+                "out_channels": 16,
+                "kernel_size": 2,
+                "stride": 3,
+                "padding": 1,
+                "dilation": 1,
+            },
+            {
+                "type":"ReLU"
+            },
+            {
+                "type":"MaxPool2d",
+                "kernel_size":2,
+                "stride": 3,
+                "padding": 0,
+                "dilation": 1,
+            },
+            {
+                "type":"Conv2d",
+                "out_channels": 8,
+                "kernel_size": 2,
+                "stride": 3,
+                "padding": 1,
+                "dilation": 1,
+            },
+            {
+                "type":"ReLU",
+            },
+            {
+                "type":"MaxPool2d",
+                "kernel_size":2,
+                "stride": 3,
+                "padding": 0,
+                "dilation": 1,
+            },
+        ]
+
+        # CNN Chuva
+        camadas_cnn = []
+        out_x = size_x
+        out_y = size_y
+        out_channels = 45
+        for value in config_cnn:
+            tipo = value.pop("type")
+            camada = getattr(nn, tipo)
+
+            if 'out_channels' in value:
+                value["in_channels"] = out_channels
+
+            try:
+                out_x, out_y = self._calc_cnn_out(out_x, out_y, **value)
+            except TypeError as e:
+                pass
+
+            camadas_cnn.append(camada(**value))
+
+            if 'out_channels' in value:
+                out_channels = value['out_channels']
+        
+        self.out_x = out_x
+        self.out_y = out_y
+        self.out_channels = out_channels
+        self.cnn = nn.Sequential(*camadas_cnn).to(dtype=self.dtype)
+        
+        ##### LSTM para cada pixel da saída e para cada um dos dois valores, Chuva e Vazão.  #####
+        self.lstm = nn.LSTM(
+            input_size=self.out_x*self.out_y*self.out_channels,
+            batch_first=True,
+            hidden_size=30, # <- Entra no linear
+        )
+
+        # Camada que obtém a partir da convolução um valor estimado de vazão média
+        # Entrada igual a saida do LSTM mais 13, 13 da data atual, ano e mês.
+        self.fc = nn.Sequential(*[
+            nn.Linear(in_features=30+13, out_features=32).to(dtype=self.dtype),
+            nn.ReLU(),
+            nn.Linear(in_features=32, out_features=16).to(dtype=self.dtype),
+            nn.ReLU(),
+            nn.Linear(in_features=16, out_features=7).to(dtype=self.dtype),
+        ])
+    
+    def _calc_cnn_out(self, h_in, w_in, kernel_size, stride, padding, dilation, **kwargs):
+        h = ((h_in + (2*padding) - (dilation * (kernel_size-1)) - 1)/stride) + 1
+        w = ((w_in + (2*padding) - (dilation * (kernel_size-1)) - 1)/stride) + 1
+        return (int(h), int(w))
+
+
+    def forward(self, input: tuple[torch.Tensor]):
+        """
+        chuva: Tensor (batch_size, n_past, height, width)
+        vazao: Tensor (batch_size, n_past, height, width)
+
+        ### Returns
+        vazao: Tensor (batch_size, n_past)
+        """
+
+        x = input[0]
+        dates = input[1]
+        batch_size = input[0].shape[0]
+
+        # Processar com CNN
+        x = x.view(batch_size * self.n_past, x.shape[2], x.shape[3], x.shape[4])
+        x:torch.Tensor = self.cnn(x)
+        x = x.view(batch_size, self.n_past, -1)  # (batch_size, n_past, cnn_out_features)
+
+        # Processar sequências de chuvas com LSTM
+        _, (x, _) = self.lstm(x)  # h_n_chuva: (1, batch_size, 64)
+
+        x = x[-1] #(batch_size, LSTM size)
+        x = torch.cat([x, dates], dim=1) # (batch_size, LSTM size + 13)
+
+        # Passar pelas camadas totalmente conectadas
+        x = self.fc(x)  # (batch_size, n_future)
+
+        return x

@@ -151,14 +151,23 @@ class CustomLoss2(nn.Module):
         self.last_pred = torch.tensor([[1]])
         self.last_obs  = torch.tensor([[1]])
 
-    def print(self, progress):
+    def start(self):
+        self.start_time = time.time()
+
+    def stop(self):
+        self.start_time = None
+
+    def print(self, step, total, description, date:pd.Timestamp):
+        if self.start_time is None:
+            print("É necessário iniciar o processo!")
+            return
 
         # x = range(0, self.epoch)
         list_data = self.last_losses.copy()
         if self.erros["LOSS"]:
             list_data.append(self.erros["LOSS"])
 
-        y = torch.log10(torch.tensor(list_data)).tolist()
+        y = torch.log10(torch.tensor(list_data, requires_grad=False)).tolist()
 
         chart = asciichartpy.plot(y, {
             'height': 10,
@@ -166,21 +175,69 @@ class CustomLoss2(nn.Module):
             'format':'{:.4g}'
         })
 
+        # Alterando a primeira coluna do chart:
+        lines = chart.split("\n")
+        new_chart = ""
+        max_size = 0
+        for line in lines:
+            start = line.split("┤")[0].split("┼")[0]
+            if len(start) > max_size:
+                max_size = len(start)
+        
+        for line in lines:
+            start = line.split("┤")[0].split("┼")[0]
+            diff = (max_size - len(start))
+            new_chart += " " * diff
+            new_chart += line[0:len(line)]
+            new_chart += "\n"
+        chart = new_chart
+
+        ### Barra de progresso ###
+
+        # Obter a largura do terminal
+        terminal_width = shutil.get_terminal_size().columns
+        progress = step / total
+        percentage = int(progress * 100)
+
+        description += f" {percentage}% ["
+
+        # Tempo de processamento
+        elapsed_time = time.time() - self.start_time
+        time_per_item = elapsed_time / step if step > 0 else 0
+        total_time = time_per_item * total
+
+        text_after = f"] {step}/{total} [{self._time_to_str(elapsed_time)}<{self._time_to_str(total_time)}, {time_per_item:.2f}s/item]"
+
+        # Exibir a barra
+
+        bar_width = max(terminal_width - len(text_after) - len(description), 10)  # Garantir no mínimo 10 caracteres para a barra
+        filled_length = int(bar_width * progress)
+
+        # Criar a barra de progresso
+        bar = "█" * filled_length + "-" * (bar_width - filled_length)
+
+        progress_bar = description + bar + text_after
+
+        # Cota Obs. Cota Sim.
         data = [[], []]
         headers = []
         for i in range(self.last_obs.shape[1]+2):
             if i == 0:
-                data[0].append("Obs.")
-                data[1].append("Sim.")
+                data[0].append("Cota Obs.")
+                data[1].append("Cota Sim.")
+
                 headers.append("Tipo")
                 continue
             if i == self.last_obs.shape[1] + 1:
                 data[0].append(self.erros["REAL"])
                 data[1].append(self.erros["PRED"])
+
                 headers.append("Mean")
                 continue
+            
+            date_str = (date + pd.Timedelta(days=i)).strftime("%d/%m/%y")
+            headers.append(date_str)
 
-            headers.append(f"Dia {i}")
             i = i-1
             data[0].append(f"{self.last_obs[0][i]:.4g}")
             data[1].append(f"{self.last_pred[0][i]:.4g}")
@@ -196,10 +253,15 @@ class CustomLoss2(nn.Module):
         os.system("cls")
         print(chart)
         print()
-        print(progress)
+        print(progress_bar)
         print()
         print(table)
 
+    def _time_to_str(self, time):
+        hours = int(time // 3600)
+        minutes = int((time % 3600) // 60)
+        seconds = int(time % 60)
+        return f"{hours:02}:{minutes:02}:{seconds:02}"
 
     def forward(self, y_pred:torch.Tensor, y_obs:torch.Tensor):
         """
@@ -211,11 +273,11 @@ class CustomLoss2(nn.Module):
             Tensor: Escalar representando a perda.
         """
 
-        self.last_obs = y_obs.clone()
-        self.last_pred = y_pred.clone()
+        self.last_obs = y_obs.clone().to("cpu")
+        self.last_pred = y_pred.clone().to("cpu")
 
-        self.erros["REAL"] = torch.nanmean(y_obs)
-        self.erros["PRED"] = torch.nanmean(y_pred)
+        self.erros["REAL"] = float(torch.nanmean(y_obs).to("cpu"))
+        self.erros["PRED"] = float(torch.nanmean(y_pred).to("cpu"))
 
         # Valores estimados menores que 0 e que não deveriam ser (!= -99)
         mask_null = (y_obs == self.null_value)
@@ -226,26 +288,28 @@ class CustomLoss2(nn.Module):
 
         # Cálculo do NSE
         numerator = torch.sum(((y_pred - y_obs) ** 2), dim=0)
-        denominator = torch.sum((y_obs - self.media) ** 2, dim=0)
+        denominator = torch.sum((y_obs - self.media) ** 2, dim=0) + 1E-8 # somando uma constante pequena para nunca ser 0
         f1 = 1 - (numerator / denominator)
         nse = torch.nanmean(f1)
-        self.erros["NSE"] = nse
+        self.erros["NSE"] = float(nse)
 
         # MSE
-        mse = torch.mean(torch.abs(y_pred - y_obs) ** 2)
-        self.erros["MSE"] = mse
+        mse = torch.mean(torch.abs(y_pred - y_obs) ** 2, dim=0)
 
         # Majorando o ERRO quando ele for menor que 1 e maior que 0
-        if mse > 0.000005 and mse < 1 and nse < 0.3:
-            sum_erro += 100
+        mse[(mse > 0.000005) & (mse < 1) & (nse < 0.3)] += 100
 
-        final_error = mse + ((nse-1)**2) + sum_erro
+        mse = torch.sqrt(mse)
+        mse =  torch.nanmean(mse)
+        self.erros["MSE"] = float(mse)
+
+        final_error = mse + sum_erro
 
         self.losses_epoch.append(final_error)
         mean_loss = sum(self.losses_epoch)/max(1, len(self.losses_epoch))
-        self.erros["LOSS"] = mean_loss
+        self.erros["LOSS"] = float(mean_loss)
 
-        return final_error
+        return final_error.to("cuda")
 
 
 # Métrica de erro personalizada para verificar tanto a vazão quanto a cota.

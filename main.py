@@ -7,7 +7,7 @@ import traceback
 import torch.version
 from neuronios.NN import *
 from datareader.data_reader2 import ReadRasters
-from erros.metricas import CustomLoss3
+from erros.metricas import *
 
 import torch
 import torch.optim as optim
@@ -15,7 +15,7 @@ import torch.optim as optim
 
 os.system("cls")
 
-load = True # Se irei utilizar o modelo salvo
+load = False # Se irei utilizar o modelo salvo
 device = "cpu"
 torch.set_default_dtype(torch.float32)
 
@@ -25,9 +25,10 @@ if torch.cuda.is_available():
 else:
     print("CUDA não está disponível.")
 
-modelo = 4     # Modelo utilizado no teste
+modelo = 5     # Modelo utilizado no teste
 min_date = "2000-01-01" # Data mínima para treino
-batch_size = 2 # Processamento em paralelo
+batch_size = 1 # Processamento em paralelo
+n_data = 14    # Quantidade de bandas nos dados salvos
 n_dias = 7     # Número de dias no futuro da previsão
 n_temp = 10    # Número de tempos no passado LSTM (dias)
 div_out = 4    # Os tamanhos X e Y serão dividos por div_out na convolução
@@ -52,6 +53,7 @@ reader = ReadRasters(
     randomize=False,
     min_date=min_date,
     normalize=False,
+    threaded=False,
 )
 
 print(f"Criando RNA com o modelo {modelo}")
@@ -96,6 +98,13 @@ elif modelo == 4:
         size_x      = size_x,
         size_y      = size_y,
     )
+elif modelo == 5:
+    cnn_lstm = Rede5(
+        n_future      = n_dias,
+        n_past    = n_temp,
+        size_x      = size_x,
+        size_y      = size_y,
+    )
 
 print("Criando Otimizador")
 optimizer = optim.Adam(cnn_lstm.parameters(), lr=0.01)
@@ -128,8 +137,7 @@ if load:
 
 # Métrica de Erro
 print("Criando Métricas de Erro")
-criterion = CustomLoss3(
-    area_bacia=82448,
+criterion = CustomLoss2(
     media=reader.mean_cotas,
     last_losses=last_losses,
     start_epoch=start_epoch
@@ -155,15 +163,15 @@ while True:
             if X is None and y is None:
                 continue
 
-            if (y[0] == -99).any().item():
+            if (y == -99).any().item():
                 continue
 
             # Forward pass
-            outputs = cnn_lstm(X)
-            try:
-                loss = criterion(outputs, y)
-            except Exception as e:
-                continue
+            outputs = cnn_lstm((X[0].to("cuda"), X[1].to("cuda")))
+            loss = criterion(outputs, y.to("cuda"))
+
+            # Retirando da GPU
+            del X, y
             
             # Backward pass e otimização
             optimizer.zero_grad()
@@ -172,7 +180,6 @@ while True:
 
             # Legenda
             description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items() if "VAZAO" not in name.upper() and "COTA" not in name.upper()])
-            # description = f"LOSS: {criterion.erros["LOSS"]:.4g}"
             description += f" | Epoch: {epoch+1}"
 
             date = reader.date_range[reader.train_indexes[(reader.step - reader.batch_size)]]
