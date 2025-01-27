@@ -439,29 +439,26 @@ class CustomLoss3(nn.Module):
 
         sum_erro = sum_erro + torch.pow(5, count)
 
-        # MSE Cota
-        mse_cota = torch.mean(torch.abs(y_pred[0] - y_obs[0]) ** 2, dim=0)
+        # RMSE Cota
+        rmse_cota = torch.sqrt(torch.mean(torch.abs(y_pred[0] - y_obs[0]) ** 2, dim=0))
 
-        # MSE Vazao
-        mse_vazao = torch.mean(torch.abs(y_pred[1] - vazao) ** 2, dim=0)
+        # RMSE Vazao
+        rmse_vazao = torch.sqrt(torch.mean(torch.abs(y_pred[1] - vazao) ** 2, dim=0))
 
         # NSE Cota
         numerator = torch.sum((y_obs[0] - y_pred[0]) ** 2, dim=0)
         denominator = torch.sum((y_obs[0] - self.media) ** 2, dim=0) + 1e-8 # Soma da constante para que o denominador não seja 0.
         nse_cota = 1 - numerator / denominator
 
-        mask = (mse_cota > 0.000005) & (mse_cota < 1) & (nse_cota < 0.3)
-        mse_cota[mask] = mse_cota[mask] + 100
-
         # Aplicando os pesos do erro e realizando uma média ponderada
-        mse_cota = (mse_cota * pesos_cota)
-        mse_cota = torch.sum(mse_cota)/torch.sum(pesos_cota)
+        rmse_cota = (rmse_cota * pesos_cota)
+        rmse_cota = torch.sum(rmse_cota)/torch.sum(pesos_cota)
         
-        mse_vazao = (mse_vazao * pesos_vazao)
-        mse_vazao = torch.sum(mse_vazao)/torch.sum(pesos_vazao)
+        rmse_vazao = (rmse_vazao * pesos_vazao)
+        rmse_vazao = torch.sum(rmse_vazao)/torch.sum(pesos_vazao)
 
         # Somando os valores de mse
-        sum_erro = sum_erro + mse_cota + mse_vazao
+        sum_erro = sum_erro + rmse_cota + (rmse_vazao/25)
 
         if len(self.losses_epoch) > 1000:
             self.losses_epoch.pop(0)
@@ -471,8 +468,8 @@ class CustomLoss3(nn.Module):
         self.erros[f"LOSS"] = mean_loss
 
         self.erros["NSE COTA"] = torch.mean(nse_cota)
-        self.erros["MSE COTA"] = mse_cota
-        self.erros["MSE VAZAO"] = mse_vazao
+        self.erros["RMSE COTA"] = rmse_cota
+        self.erros["RMSE VAZAO"] = rmse_vazao
 
         return sum_erro
     

@@ -98,7 +98,7 @@ elif modelo == 4:
     )
 
 print("Criando Otimizador")
-optimizer = optim.AdamW(cnn_lstm.parameters(), lr=0.001)
+optimizer = optim.Adam(cnn_lstm.parameters(), lr=0.01)
 
 loss = 0
 start_epoch = 0
@@ -171,8 +171,8 @@ while True:
             optimizer.step()
 
             # Legenda
-            #description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items()])
-            description = f"LOSS: {criterion.erros["LOSS"]:.4g}"
+            description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items() if "VAZAO" not in name.upper() and "COTA" not in name.upper()])
+            # description = f"LOSS: {criterion.erros["LOSS"]:.4g}"
             description += f" | Epoch: {epoch+1}"
 
             date = reader.date_range[reader.train_indexes[(reader.step - reader.batch_size)]]
