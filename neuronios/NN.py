@@ -481,9 +481,9 @@ class Rede5(nn.Module):
         config_cnn = [
             {
                 "type":"Conv2d",
-                "out_channels": 16,
-                "kernel_size": 2,
-                "stride": 3,
+                "out_channels": 32,
+                "kernel_size": 3,
+                "stride": 2,
                 "padding": 1,
                 "dilation": 1,
             },
@@ -492,16 +492,16 @@ class Rede5(nn.Module):
             },
             {
                 "type":"MaxPool2d",
-                "kernel_size":2,
-                "stride": 3,
+                "kernel_size":3,
+                "stride": 2,
                 "padding": 0,
                 "dilation": 1,
             },
             {
                 "type":"Conv2d",
-                "out_channels": 8,
-                "kernel_size": 2,
-                "stride": 3,
+                "out_channels": 16,
+                "kernel_size": 3,
+                "stride": 2,
                 "padding": 1,
                 "dilation": 1,
             },
@@ -511,7 +511,7 @@ class Rede5(nn.Module):
             {
                 "type":"MaxPool2d",
                 "kernel_size":2,
-                "stride": 3,
+                "stride": 1,
                 "padding": 0,
                 "dilation": 1,
             },
@@ -548,13 +548,13 @@ class Rede5(nn.Module):
         self.lstm = nn.LSTM(
             input_size=self.out_x*self.out_y*self.out_channels,
             batch_first=True,
-            hidden_size=30, # <- Entra no linear
+            hidden_size=64, # <- Entra no linear
         )
 
         # Camada que obtém a partir da convolução um valor estimado de vazão média
         # Entrada igual a saida do LSTM mais 13, 13 da data atual, ano e mês.
         self.fc = nn.Sequential(*[
-            nn.Linear(in_features=30+13, out_features=32).to(dtype=self.dtype),
+            nn.Linear(in_features=64+13, out_features=32).to(dtype=self.dtype),
             nn.ReLU(),
             nn.Linear(in_features=32, out_features=16).to(dtype=self.dtype),
             nn.ReLU(),
@@ -586,9 +586,9 @@ class Rede5(nn.Module):
         x = x.view(batch_size, self.n_past, -1)  # (batch_size, n_past, cnn_out_features)
 
         # Processar sequências de chuvas com LSTM
-        _, (x, _) = self.lstm(x)  # h_n_chuva: (1, batch_size, 64)
+        x, (_, _) = self.lstm(x)  # h_n_chuva: (1, batch_size, 64)
 
-        x = x[-1] #(batch_size, LSTM size)
+        x = x[:, -1, :] #(batch_size, LSTM size)
         x = torch.cat([x, dates], dim=1) # (batch_size, LSTM size + 13)
 
         # Passar pelas camadas totalmente conectadas

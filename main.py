@@ -15,7 +15,7 @@ import torch.optim as optim
 
 os.system("cls")
 
-load = False # Se irei utilizar o modelo salvo
+load = True # Se irei utilizar o modelo salvo
 device = "cpu"
 torch.set_default_dtype(torch.float32)
 
@@ -50,7 +50,7 @@ reader = ReadRasters(
     n_times=n_temp,
     n_days=n_dias,
     train_percent=0.8,
-    randomize=False,
+    randomize=True,
     min_date=min_date,
     normalize=False,
     threaded=False,
@@ -107,7 +107,7 @@ elif modelo == 5:
     )
 
 print("Criando Otimizador")
-optimizer = optim.Adam(cnn_lstm.parameters(), lr=0.01)
+optimizer = optim.AdamW(cnn_lstm.parameters(), lr=0.001, weight_decay=0.05)
 
 loss = 0
 start_epoch = 0
@@ -170,13 +170,13 @@ while True:
             outputs = cnn_lstm((X[0].to("cuda"), X[1].to("cuda")))
             loss = criterion(outputs, y.to("cuda"))
 
-            # Retirando da GPU
-            del X, y
-            
             # Backward pass e otimização
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            del X, y, outputs, loss
+            torch.cuda.empty_cache()  # Limpa a cache da GPU
 
             # Legenda
             description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items() if "VAZAO" not in name.upper() and "COTA" not in name.upper()])

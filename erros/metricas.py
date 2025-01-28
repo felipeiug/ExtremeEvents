@@ -280,11 +280,6 @@ class CustomLoss2(nn.Module):
         self.erros["PRED"] = float(torch.nanmean(y_pred).to("cpu"))
 
         # Valores estimados menores que 0 e que não deveriam ser (!= -99)
-        mask_null = (y_obs == self.null_value)
-        sum_erro = 0
-        if y_pred.min() < 0:
-            mask = ((~mask_null) & (y_pred < 0)) | (y_obs > 1)
-            sum_erro += torch.tensor(5) ** torch.sum(mask)
 
         # Cálculo do NSE
         numerator = torch.sum(((y_pred - y_obs) ** 2), dim=0)
@@ -294,22 +289,16 @@ class CustomLoss2(nn.Module):
         self.erros["NSE"] = float(nse)
 
         # MSE
-        mse = torch.mean(torch.abs(y_pred - y_obs) ** 2, dim=0)
+        mse = torch.mean(torch.abs(y_pred - y_obs) ** 2)
 
-        # Majorando o ERRO quando ele for menor que 1 e maior que 0
-        mse[(mse > 0.000005) & (mse < 1) & (nse < 0.3)] += 100
+        rmse = torch.sqrt(mse)
+        self.erros["RMSE"] = float(rmse)
 
-        mse = torch.sqrt(mse)
-        mse =  torch.nanmean(mse)
-        self.erros["MSE"] = float(mse)
-
-        final_error = mse + sum_erro
-
-        self.losses_epoch.append(final_error)
+        self.losses_epoch.append(mse)
         mean_loss = sum(self.losses_epoch)/max(1, len(self.losses_epoch))
         self.erros["LOSS"] = float(mean_loss)
 
-        return final_error.to("cuda")
+        return mse.to("cuda")
 
 
 # Métrica de erro personalizada para verificar tanto a vazão quanto a cota.

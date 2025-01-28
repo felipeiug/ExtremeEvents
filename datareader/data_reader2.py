@@ -1,5 +1,6 @@
 import os
 import torch
+import psutil
 import rioxarray
 import numpy as np
 import pandas as pd
@@ -130,8 +131,26 @@ class ReadRasters:
     step = 0
     lock = Lock()   # Lock para sincronização
     buffer = None
+    rasters = {}
+    n_usos_rasters = {}
 
-    def __init__(self, n_days, data_path, data_grid, uso_solo_path, elevation_file, declive_file,  batch_size, n_times, train_percent, min_date="2000-01-01", normalize=True, randomize=True, null_value = -99, threaded = True):
+    def __init__(self,
+        n_days,
+        data_path,
+        data_grid,
+        uso_solo_path,
+        elevation_file,
+        declive_file,
+        batch_size,
+        n_times,
+        train_percent,
+        min_date="2000-01-01",
+        normalize=True,
+        randomize=True,
+        null_value = -99,
+        ram_use_percentage = 0.7,
+        threaded = True,
+    ):
         """
         Os dados do dia N são os dados do dia N-1 ao dia `N-1-n_times`
         Todos os dias sem dados serão substituidos por uma matriz equivalente com os valores null_value em todo os 
@@ -140,6 +159,7 @@ class ReadRasters:
 
         read_vazoes = False
 
+        self.ram_use_percentage = ram_use_percentage
         self.threaded = threaded
         self.randomize = randomize
         self.null_value = null_value
@@ -271,6 +291,8 @@ class ReadRasters:
         return int(np.ceil(self.n_test_data/self.batch_size))
 
     def reset(self):
+        self.rasters = {}
+
         self.step = 0
         self.indexes = np.arange(len(self.date_range))
 
@@ -322,28 +344,16 @@ class ReadRasters:
         # Sinaliza que a leitura está em andamento
         self.lock.acquire()
 
-        try:
-            # Criando as variáveis na memória (mais eficiente)
-            for i in range(10):
-                try:
-                    # Chuva x Vazão x Temperatura x Umidade x Radiação x Declividade x Altitude x Uso do Solo
-                    matrix_data = torch.full((self.batch_size, self.n_times, 7 + len(uso_solo_legenda), self.grid[0], self.grid[1]), self.null_value, device="cpu", dtype=torch.float32)
-                    
-                    # Data
-                    vetor_data  = torch.full((self.batch_size, 13), self.null_value, device="cpu", dtype=torch.float32)
-                    vetor_data[:, 0:13] = 0
+        try:    
+            # Chuva x Vazão x Temperatura x Umidade x Radiação x Declividade x Altitude x Uso do Solo
+            matrix_data = torch.full((self.batch_size, self.n_times, 7 + len(uso_solo_legenda), self.grid[0], self.grid[1]), self.null_value, device="cpu", dtype=torch.float32)
+            
+            # Data
+            vetor_data  = torch.full((self.batch_size, 13), self.null_value, device="cpu", dtype=torch.float32)
+            vetor_data[:, 0:13] = 0
 
-                    # Saídas
-                    cotas = torch.full((self.batch_size, self.n_days), self.null_value, device="cpu", dtype=torch.float32)
-                    break
-                except torch.OutOfMemoryError as e:
-                    print("Aguardando memória na CPU")
-                    sleep(1)
-            else:
-                self.buffer = (None, None)
-                # Sinaliza que a leitura foi concluída
-                self.lock.release()
-                return
+            # Saídas
+            cotas = torch.full((self.batch_size, self.n_days), self.null_value, device="cpu", dtype=torch.float32)
 
             for batch in range(self.batch_size):
                 if self.train_indexes.shape[0] <= self.step:
@@ -377,13 +387,22 @@ class ReadRasters:
                 dados_day = None
                 
                 for n, date in enumerate(dates):
-                    filename = date.strftime("%Y-%m-%d") + ".tiff"
-                    if filename not in self.files:
+                    date = date.strftime("%Y-%m-%d")
+
+                    # Verificando a ocorrência de dados
+                    if self.rasters[date] is None or falha:
+
+                        # Removendo dados não utilizandos
+                        self.n_usos_rasters[date] -= 1
+                        if self.n_usos_rasters[date] <= 0:
+                            self.n_usos_rasters.pop(date)
+                            self.rasters.pop(date)
+
                         falha = True
-                        break
+                        continue
 
                     # Lendo arquivo de dados
-                    dados_day = self._read_raster(self.data_path + "/" + filename)
+                    dados_day = self.rasters[date]
                     
                     # Dados da Matriz
                     # Chuva (B01) | Vazão (B02) | Temp. Méd. (B04) | Umidade Med. (B05) | Pressão Med. (B08) | Radiação Med. (B09)
@@ -413,10 +432,53 @@ class ReadRasters:
         # Sinaliza que a leitura foi concluída
         self.lock.release()
 
+    def _buffer_rasters(self):
+        # Limpando o terminal
+        os.system("cls")
+
+        # Informação do que esta carregando o buffer
+        print("Adicionando dados ao Buffer", end="")
+
+        while psutil.virtual_memory().percent >= self.ram_use_percentage*100 and len(self.rasters) > 0:
+            self.rasters.pop(list(self.rasters.keys())[0])
+
+        i = self.step
+
+        while True:
+            if psutil.virtual_memory().percent >= self.ram_use_percentage*100:
+                break
+
+            actual_date = self.date_range[self.train_indexes[i]]
+            dates = pd.date_range(actual_date-timedelta(days=self.n_times-1), actual_date)
+
+            for date in dates:
+                # Caso o dado já esteja nos dados
+                if date in self.rasters and date in self.n_usos_rasters:
+                    self.n_usos_rasters += 1
+                    continue
+                
+                # Arquivo desta data
+                filename = date + ".tiff"
+
+                # Caso o dado não exista na base de dados
+                if filename not in self.files:
+                    self.rasters[date] = None
+                    self.n_usos_rasters[date] = 1
+                    continue
+
+                raster = self._read_raster(self.data_path + "/" + filename)
+                self.rasters[date] = raster
+                self.n_usos_rasters[date] = 1
+
+            print(".", end="")
+
+            i+= 1
+        print()
+
     def _read_raster(self, raster):
         data_raster = rioxarray.open_rasterio(raster)
-        dados = torch.from_numpy(data_raster.values)
-        return dados.to("cpu")
+        dados = torch.from_numpy(data_raster.values).to("cpu")
+        return dados
 
     def _generate_dates(self):
         dates = pd.to_datetime([i.split(".")[0] for i in self.files])
