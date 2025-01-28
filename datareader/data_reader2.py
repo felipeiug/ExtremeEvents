@@ -131,8 +131,7 @@ class ReadRasters:
     step = 0
     lock = Lock()   # Lock para sincronização
     buffer = None
-    rasters = {}
-    n_usos_rasters = {}
+    raster_buffer = None
 
     def __init__(self,
         n_days,
@@ -156,8 +155,6 @@ class ReadRasters:
         Todos os dias sem dados serão substituidos por uma matriz equivalente com os valores null_value em todo os 
         dados indisponíveis
         """
-
-        read_vazoes = False
 
         self.ram_use_percentage = ram_use_percentage
         self.threaded = threaded
@@ -224,10 +221,10 @@ class ReadRasters:
                 [0, 1], # Altitude
             ]
             
-        self.dados = pd.read_csv(r"D:\Mestrado\2º Semestre\Extreme Events\Codigos2\dados\dados.csv", low_memory=False)
+        dados = pd.read_csv(r"D:\Mestrado\2º Semestre\Extreme Events\Codigos2\dados\dados.csv", low_memory=False)
 
         # Dados da cota no ponto de estudo
-        self.cotas = self.dados.copy()
+        self.cotas = dados.copy()
         self.cotas.codigo = self.cotas.codigo.astype(str)
         self.cotas = self.cotas[(self.cotas.codigo == '87450005') & (self.cotas.tipo == "cota")]
         self.cotas = self.cotas[['date', 'value']]
@@ -237,21 +234,8 @@ class ReadRasters:
         # Média dos valores observados
         self.mean_cotas = torch.tensor(np.nanmean(self.cotas.value.values))
 
-        # Dados das vazões na bacia
-        if read_vazoes:
-            self.vazoes = self.dados.copy()
-            self.vazoes = self.vazoes[(self.vazoes.tipo == "vazao")]
-            self.vazoes["area"] = None
-            for i, row in tqdm(self.vazoes.iterrows(), desc="Processando dados de vazão", total=len(self.vazoes)):
-                code = row.codigo
-                area = area_drenagem_estacoes[code]
-                self.vazoes.at[i, "area"] = area
-            self.vazoes = self.vazoes[['date', 'value', "area"]]
-            self.vazoes.loc[self.vazoes["value"] < 0, "value"] = self.null_value
-            self.vazoes.date = pd.to_datetime(self.vazoes.date)
-
         # Removendo os dados
-        del self.dados
+        del dados
 
         #Altitude e declividade
         min = self.max_mins[12][0]
@@ -272,14 +256,17 @@ class ReadRasters:
         self.files = os.listdir(data_path)
         
         # Range de datas que será utilizado
-        self.date_range = self._generate_dates()
+        self.date_range = pd.to_datetime([i.split(".")[0] for i in self.files]).sort_values(ascending=True)
 
         # Iniciando dados aleatórios
         self.reset()
 
         # Adicionando a primeira leitura
-        Thread(target=self._read_next).start()
-        sleep(0.5) # Tempo para setar o lock
+        if self.threaded:
+            Thread(target=self._read_next).start()
+            sleep(0.5) # Tempo para setar o lock
+        else:
+            self._read_next()
 
     def total(self):
         return int(np.ceil(self.indexes.size/self.batch_size))
@@ -291,8 +278,6 @@ class ReadRasters:
         return int(np.ceil(self.n_test_data/self.batch_size))
 
     def reset(self):
-        self.rasters = {}
-
         self.step = 0
         self.indexes = np.arange(len(self.date_range))
 
@@ -300,6 +285,14 @@ class ReadRasters:
 
         if(self.randomize):
             np.random.shuffle(self.indexes)
+
+        # Buffer de Rasters
+        read_rasters = []
+        for index in self.indexes:
+            actual_date = self.date_range[index]
+            dates = [date.strftime("%Y-%m-%d") for date in pd.date_range(actual_date-timedelta(days=self.n_times-1), actual_date)]
+            read_rasters.append(dates)
+        self.raster_buffer = BufferRaster(read_rasters, self.data_path, self.ram_use_percentage)
         
         self.n_train_data = int(np.floor(self.train_percent*self.indexes.size))
         self.n_test_data = int(self.indexes.size - self.n_train_data)
@@ -319,7 +312,7 @@ class ReadRasters:
                 
                 return self.buffer
         else:
-            buff = deepcopy(self.buffer)
+            buff = self.buffer
             self._read_next()
             return buff
 
@@ -344,7 +337,10 @@ class ReadRasters:
         # Sinaliza que a leitura está em andamento
         self.lock.acquire()
 
-        try:    
+        try:
+            from time import time
+
+            t = time()
             # Chuva x Vazão x Temperatura x Umidade x Radiação x Declividade x Altitude x Uso do Solo
             matrix_data = torch.full((self.batch_size, self.n_times, 7 + len(uso_solo_legenda), self.grid[0], self.grid[1]), self.null_value, device="cpu", dtype=torch.float32)
             
@@ -354,11 +350,24 @@ class ReadRasters:
 
             # Saídas
             cotas = torch.full((self.batch_size, self.n_days), self.null_value, device="cpu", dtype=torch.float32)
+            print(1, time()-t)
 
+            # Reduzo para não esquecer de adicionar no meio do código
+            t = time()
+            self.step -= 1
             for batch in range(self.batch_size):
+                self.step += 1
+
                 if self.train_indexes.shape[0] <= self.step:
                     break
+
+                # Próximos rasteres
+                rasters = self.raster_buffer.next
                 
+                # Caso haja alguma falha
+                if None in rasters:
+                    continue
+
                 # Data de Processamento
                 actual_date:pd.DatetimeIndex = self.date_range[self.train_indexes[self.step]]
 
@@ -366,7 +375,9 @@ class ReadRasters:
                 vetor_data[batch, 0] = (actual_date.year-2000)
                 vetor_data[batch, actual_date.month] = 1
 
-                ### Uso do solo
+                ########### Uso do solo ###################
+
+                # Obtendo o uso do solo para o ano
                 uso_solo = self.uso_solo[actual_date.year]
 
                 # Para cada passo de tempo em cada posição da matriz e para cada tipo de uso do solo,
@@ -382,27 +393,9 @@ class ReadRasters:
 
                 del actual_date
 
-                # Obtendo os valores dos rasteres
-                falha = False
-                dados_day = None
-                
+                # Processando cada raster
                 for n, date in enumerate(dates):
-                    date = date.strftime("%Y-%m-%d")
-
-                    # Verificando a ocorrência de dados
-                    if self.rasters[date] is None or falha:
-
-                        # Removendo dados não utilizandos
-                        self.n_usos_rasters[date] -= 1
-                        if self.n_usos_rasters[date] <= 0:
-                            self.n_usos_rasters.pop(date)
-                            self.rasters.pop(date)
-
-                        falha = True
-                        continue
-
-                    # Lendo arquivo de dados
-                    dados_day = self.rasters[date]
+                    dados_day = rasters.pop(0)
                     
                     # Dados da Matriz
                     # Chuva (B01) | Vazão (B02) | Temp. Méd. (B04) | Umidade Med. (B05) | Pressão Med. (B08) | Radiação Med. (B09)
@@ -415,16 +408,15 @@ class ReadRasters:
                 
 
                 # Dados de Saída
-                if not falha:
-                    for n, date in enumerate(dates_saida):
-                        cota_date = self.cotas[self.cotas.date == date]
-                        if cota_date.empty:
-                            raise ValueError("Valor vazio aqui")
-                        cotas[batch, n] = torch.tensor(cota_date.value.values[0], device="cpu")
-                    del n, date, cota_date
+                for n, date in enumerate(dates_saida):
+                    cota_date = self.cotas[self.cotas.date == date]
+                    if cota_date.empty:
+                        continue
+                    cotas[batch, n] = torch.tensor(cota_date.value.values[0], device="cpu")
+                del n, date, cota_date
 
-                self.step += 1
-
+            print(1, time()-t)
+            
             self.buffer = ((matrix_data, vetor_data), cotas)
         except Exception as e:
             self.buffer = e
@@ -432,64 +424,65 @@ class ReadRasters:
         # Sinaliza que a leitura foi concluída
         self.lock.release()
 
+    def _read_raster(self, raster):
+        data_raster = rioxarray.open_rasterio(raster)
+        dados = torch.from_numpy(data_raster.values).to("cpu")
+        return dados
+
+
+class BufferRaster:
+    def __init__(self, rasters:list[list[torch.Tensor|None]], data_path:str, ram_use_percentage:float):
+        self.ram_use_percentage = ram_use_percentage
+        self.data_path = data_path
+
+        self.files = os.listdir(self.data_path)
+
+        self.rasters_list = rasters
+        self.rasters:list[list[torch.Tensor|None]] = []
+        self._buffer_rasters()
+
+    @property
+    def next(self):
+        if len(self.rasters) == 0:
+            self._buffer_rasters()
+        return self.rasters.pop(0)
+
     def _buffer_rasters(self):
-        # Limpando o terminal
-        os.system("cls")
+        if len(self.rasters_list) == 0:
+            raise ValueError("Você precisa resetar o gerador de rasteres")
 
-        # Informação do que esta carregando o buffer
-        print("Adicionando dados ao Buffer", end="")
+        for number in range(len(self.rasters_list)):
+            # Obtendo o primeiro item da lista de rasteres
+            dates = self.rasters_list.pop(0)
 
-        while psutil.virtual_memory().percent >= self.ram_use_percentage*100 and len(self.rasters) > 0:
-            self.rasters.pop(list(self.rasters.keys())[0])
+            # Rasteres a serem adicionados
+            rasters_add = []
 
-        i = self.step
+            # Para cada data
+            for _, date in enumerate(dates):
+                # Informando o processo
+                os.system("cls")
+                print("Lendo rasters", "-"*number)
 
-        while True:
-            if psutil.virtual_memory().percent >= self.ram_use_percentage*100:
-                break
-
-            actual_date = self.date_range[self.train_indexes[i]]
-            dates = pd.date_range(actual_date-timedelta(days=self.n_times-1), actual_date)
-
-            for date in dates:
-                # Caso o dado já esteja nos dados
-                if date in self.rasters and date in self.n_usos_rasters:
-                    self.n_usos_rasters += 1
-                    continue
+                if len(self.rasters) > 0 and psutil.virtual_memory().percent >= self.ram_use_percentage*100:
+                    break
                 
                 # Arquivo desta data
                 filename = date + ".tiff"
 
                 # Caso o dado não exista na base de dados
                 if filename not in self.files:
-                    self.rasters[date] = None
-                    self.n_usos_rasters[date] = 1
+                    rasters_add.append(None)
                     continue
+                
+                data_raster = rioxarray.open_rasterio(self.data_path + "/" + filename)
+                raster = torch.from_numpy(data_raster.values).to("cpu")
 
-                raster = self._read_raster(self.data_path + "/" + filename)
-                self.rasters[date] = raster
-                self.n_usos_rasters[date] = 1
+                rasters_add.append(raster)
+            else:
+                self.rasters.append(rasters_add)
+                continue
 
-            print(".", end="")
+            break
 
-            i+= 1
-        print()
-
-    def _read_raster(self, raster):
-        data_raster = rioxarray.open_rasterio(raster)
-        dados = torch.from_numpy(data_raster.values).to("cpu")
-        return dados
-
-    def _generate_dates(self):
-        dates = pd.to_datetime([i.split(".")[0] for i in self.files])
-        set_dates = set(self.cotas.date)
-        dates_return = []
-        for date_now in dates:
-            date_range = pd.date_range(date_now + timedelta(days=1), date_now + timedelta(days=self.n_days))
-            if set(date_range).issubset(set_dates):
-                dates_return.append(date_now)
-        
-        dates_return = pd.to_datetime(dates_return)
-        dates_return.sort_values()
-        return dates_return
-
+    
