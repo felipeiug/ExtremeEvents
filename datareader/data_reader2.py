@@ -292,6 +292,10 @@ class ReadRasters:
             actual_date = self.date_range[index]
             dates = [date.strftime("%Y-%m-%d") for date in pd.date_range(actual_date-timedelta(days=self.n_times-1), actual_date)]
             read_rasters.append(dates)
+        
+        if self.raster_buffer is not None:
+            self.raster_buffer.run = False
+            del self.raster_buffer
         self.raster_buffer = BufferRaster(read_rasters, self.data_path, self.ram_use_percentage)
         
         self.n_train_data = int(np.floor(self.train_percent*self.indexes.size))
@@ -349,10 +353,7 @@ class ReadRasters:
             cotas = torch.full((self.batch_size, self.n_days), self.null_value, device="cpu", dtype=torch.float32)
 
             # Reduzo para não esquecer de adicionar no meio do código
-            self.step -= 1
             for batch in range(self.batch_size):
-                self.step += 1
-
                 if self.train_indexes.shape[0] <= self.step:
                     break
 
@@ -361,6 +362,7 @@ class ReadRasters:
                 
                 # Caso haja alguma falha
                 if None in rasters:
+                    self.step += 1
                     continue
 
                 # Data de Processamento
@@ -410,6 +412,9 @@ class ReadRasters:
                     cotas[batch, n] = torch.tensor(cota_date.value.values[0], device="cpu")
                 del n, date, cota_date
 
+                # Adiciono 1 step na leitura dos dados
+                self.step += 1
+
             self.buffer = ((matrix_data, vetor_data), cotas)
         except Exception as e:
             self.buffer = e
@@ -424,6 +429,8 @@ class ReadRasters:
 
 
 class BufferRaster:
+    lock = Lock()   # Lock para sincronização
+
     def __init__(self, rasters:list[list[torch.Tensor|None]], data_path:str, ram_use_percentage:float):
         self.ram_use_percentage = ram_use_percentage
         self.data_path = data_path
@@ -432,12 +439,19 @@ class BufferRaster:
 
         self.rasters_list = rasters
         self.rasters:list[list[torch.Tensor|None]] = []
-        self._buffer_rasters()
+        
+        self.run = True
+        Thread(target=self._buffer_rasters, name="Thread Buffer").start()
 
     @property
     def next(self):
+        while len(self.rasters) == 0 and len(self.rasters_list) != 0:
+            sleep(1)
+            continue
+
         if len(self.rasters) == 0:
-            self._buffer_rasters()
+            return None
+        
         return self.rasters.pop(0)
 
     def _buffer_rasters(self):
@@ -445,6 +459,9 @@ class BufferRaster:
             raise ValueError("Você precisa resetar o gerador de rasteres")
 
         for number in range(len(self.rasters_list)):
+            if not self.run:
+                break
+
             # Obtendo o primeiro item da lista de rasteres
             dates = self.rasters_list.pop(0)
 
@@ -453,8 +470,8 @@ class BufferRaster:
 
             # Para cada data
             for _, date in enumerate(dates):
-                if len(self.rasters) > 0 and psutil.virtual_memory().percent >= self.ram_use_percentage*100:
-                    break
+                while self.run and len(self.rasters) > 0 and psutil.virtual_memory().percent >= self.ram_use_percentage*100:
+                    sleep(0.5)
                 
                 # Arquivo desta data
                 filename = date + ".tiff"
@@ -468,10 +485,7 @@ class BufferRaster:
                 raster = torch.from_numpy(data_raster.values).to("cpu")
 
                 rasters_add.append(raster)
-            else:
-                self.rasters.append(rasters_add)
-                continue
+            self.rasters.append(rasters_add)
 
-            break
 
     

@@ -190,7 +190,31 @@ class CustomLoss2(nn.Module):
             new_chart += " " * diff
             new_chart += line[0:len(line)]
             new_chart += "\n"
-        chart = new_chart
+        chart1 = new_chart
+
+        # Gráfico 2
+        chart = asciichartpy.plot(torch.tensor(self.losses_epoch, requires_grad=False).tolist(), {
+            'height': 10,
+            'min':0,
+            'format':'{:.4g}'
+        })
+
+        # Alterando a primeira coluna do chart:
+        lines = chart.split("\n")
+        new_chart = ""
+        max_size = 0
+        for line in lines:
+            start = line.split("┤")[0].split("┼")[0]
+            if len(start) > max_size:
+                max_size = len(start)
+        
+        for line in lines:
+            start = line.split("┤")[0].split("┼")[0]
+            diff = (max_size - len(start))
+            new_chart += " " * diff
+            new_chart += line[0:len(line)]
+            new_chart += "\n"
+        chart2 = new_chart
 
         ### Barra de progresso ###
 
@@ -251,7 +275,11 @@ class CustomLoss2(nn.Module):
         )
 
         os.system("cls")
-        print(chart)
+        print("MEAN LOSS")
+        print(chart1)
+        print()
+        print("EPOCH LOSS")
+        print(chart2)
         print()
         print(progress_bar)
         print()

@@ -54,7 +54,7 @@ reader = ReadRasters(
     min_date=min_date,
     normalize=False,
     threaded=False, # Não é recomendade usar as threads quando o buffer está em mais de 10%
-    ram_use_percentage = 0.7,
+    ram_use_percentage = 0.8,
 )
 
 print(f"Criando RNA com o modelo {modelo}")
@@ -186,6 +186,7 @@ while True:
             date = reader.date_range[reader.train_indexes[(reader.step - reader.batch_size)]]
 
             criterion.print(step, reader.total_train(), description, date)
+            print("RASTERES:", len(reader.raster_buffer.rasters))
         except Exception as e:
             traceback.print_exc()
             print(e)
