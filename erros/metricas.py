@@ -161,6 +161,9 @@ class CustomLoss2(nn.Module):
         if self.start_time is None:
             print("É necessário iniciar o processo!")
             return
+        
+        # Obter a largura do terminal
+        terminal_width = shutil.get_terminal_size().columns
 
         # x = range(0, self.epoch)
         list_data = self.last_losses.copy()
@@ -193,7 +196,12 @@ class CustomLoss2(nn.Module):
         chart1 = new_chart
 
         # Gráfico 2
-        chart = asciichartpy.plot(torch.tensor(self.losses_epoch, requires_grad=False).tolist(), {
+        losses = self.losses_epoch
+        N = max(20, int(terminal_width * 0.7))
+        if len(losses) > N:
+            losses = [losses[int(i*len(losses)/N)] for i in range(N)]
+        
+        chart = asciichartpy.plot(torch.tensor(losses, requires_grad=False).tolist(), {
             'height': 10,
             'min':0,
             'format':'{:.4g}'
@@ -215,11 +223,10 @@ class CustomLoss2(nn.Module):
             new_chart += line[0:len(line)]
             new_chart += "\n"
         chart2 = new_chart
+        chart2 += "\nLosses: " + str(len(losses))
 
         ### Barra de progresso ###
 
-        # Obter a largura do terminal
-        terminal_width = shutil.get_terminal_size().columns
         progress = step / total
         percentage = int(progress * 100)
 
