@@ -338,9 +338,6 @@ class ReadRasters:
         self.lock.acquire()
 
         try:
-            from time import time
-
-            t = time()
             # Chuva x Vazão x Temperatura x Umidade x Radiação x Declividade x Altitude x Uso do Solo
             matrix_data = torch.full((self.batch_size, self.n_times, 7 + len(uso_solo_legenda), self.grid[0], self.grid[1]), self.null_value, device="cpu", dtype=torch.float32)
             
@@ -350,10 +347,8 @@ class ReadRasters:
 
             # Saídas
             cotas = torch.full((self.batch_size, self.n_days), self.null_value, device="cpu", dtype=torch.float32)
-            print(1, time()-t)
 
             # Reduzo para não esquecer de adicionar no meio do código
-            t = time()
             self.step -= 1
             for batch in range(self.batch_size):
                 self.step += 1
@@ -415,8 +410,6 @@ class ReadRasters:
                     cotas[batch, n] = torch.tensor(cota_date.value.values[0], device="cpu")
                 del n, date, cota_date
 
-            print(1, time()-t)
-            
             self.buffer = ((matrix_data, vetor_data), cotas)
         except Exception as e:
             self.buffer = e
@@ -460,10 +453,6 @@ class BufferRaster:
 
             # Para cada data
             for _, date in enumerate(dates):
-                # Informando o processo
-                os.system("cls")
-                print("Lendo rasters", "-"*number)
-
                 if len(self.rasters) > 0 and psutil.virtual_memory().percent >= self.ram_use_percentage*100:
                     break
                 

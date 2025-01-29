@@ -27,7 +27,7 @@ else:
 
 modelo = 5     # Modelo utilizado no teste
 min_date = "2000-01-01" # Data mínima para treino
-batch_size = 2 # Processamento em paralelo
+batch_size = 1 # Processamento em paralelo
 n_data = 14    # Quantidade de bandas nos dados salvos
 n_dias = 7     # Número de dias no futuro da previsão
 n_temp = 10    # Número de tempos no passado LSTM (dias)
@@ -53,12 +53,9 @@ reader = ReadRasters(
     randomize=True,
     min_date=min_date,
     normalize=False,
-    threaded=False,
+    threaded=False, # Não é recomendade usar as threads quando o buffer está em mais de 10%
+    ram_use_percentage = 0.7,
 )
-
-for i in range(reader.total_train()):
-    a = reader.next()
-    print(len(a))
 
 print(f"Criando RNA com o modelo {modelo}")
 if modelo == 1:
