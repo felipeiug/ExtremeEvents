@@ -199,7 +199,9 @@ class CustomLoss2(nn.Module):
         losses = self.losses_epoch
         N = max(20, int(terminal_width * 0.7))
         if len(losses) > N:
-            losses = [losses[int(i*len(losses)/N)] for i in range(N)]
+            losses = torch.tensor(losses, requires_grad=False)
+            chunks = torch.chunk(losses, N+1)
+            losses = torch.tensor([torch.nanmean(chunk) for chunk in chunks])
         
         chart = asciichartpy.plot(torch.tensor(losses, requires_grad=False).tolist(), {
             'height': 10,
@@ -223,7 +225,7 @@ class CustomLoss2(nn.Module):
             new_chart += line[0:len(line)]
             new_chart += "\n"
         chart2 = new_chart
-        chart2 += "\nLosses: " + str(len(losses))
+        chart2 += "Losses: " + str(len(losses))
 
         ### Barra de progresso ###
 

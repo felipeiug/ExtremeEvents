@@ -107,8 +107,11 @@ elif modelo == 5:
         size_y      = size_y,
     )
 
+total_params = sum(p.numel() for p in cnn_lstm.parameters())
+print(f"Modelo {modelo} com {total_params} parâmtros")
+
 print("Criando Otimizador")
-optimizer = optim.AdamW(cnn_lstm.parameters(), lr=0.001, weight_decay=0.05)
+optimizer = optim.AdamW(cnn_lstm.parameters(), lr=0.0001, weight_decay=0.05)
 
 loss = 0
 start_epoch = 0
