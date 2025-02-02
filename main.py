@@ -146,9 +146,11 @@ while True:
 
     progress_bar = range(reader.total_train())
     criterion.start()
+    
+    X, y = reader.next()
     for step in progress_bar:
         try:
-            X, y = reader.next()
+            X, y = reader.buffer
 
             if X is None and y is None:
                 continue
@@ -156,14 +158,15 @@ while True:
                 continue
 
             for dia in dias_previsao:
-                nns[dia].train()
-                opts[dia].zero_grad()
-
                 # Forward pass
-                outputs = nns[dia]((X[0].to("cuda"), X[1].to("cuda")))
-                loss: torch.Tensor = criterion(outputs, y[:, dia-1].to("cuda"), dia)
+                outputs = nns[dia]((X[0].clone().to("cuda"), X[1].clone().to("cuda")))
+
+                # Métrica de erro #### Não esta ideal, mas funciona.
+                criterion(outputs, y[:, dia-1].to("cuda"), dia)
+                loss = torch.mean(torch.abs(outputs - y[:, dia-1].to("cuda")) ** 2)
 
                 # Backward pass e otimização
+                opts[dia].zero_grad()
                 loss.backward()
                 opts[dia].step()
 
