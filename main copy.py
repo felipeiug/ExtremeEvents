@@ -94,17 +94,17 @@ elif modelo == 3:
     )
 elif modelo == 4:
     cnn_lstm = Rede4(
-        n_future      = n_dias,
-        n_past    = n_temp,
-        size_x      = size_x,
-        size_y      = size_y,
+        n_future = n_dias,
+        n_past   = n_temp,
+        size_x   = size_x,
+        size_y   = size_y,
     )
 elif modelo == 5:
     cnn_lstm = Rede5(
-        n_future      = n_dias,
-        n_past    = n_temp,
-        size_x      = size_x,
-        size_y      = size_y,
+        n_future = n_dias,
+        n_past   = n_temp,
+        size_x   = size_x,
+        size_y   = size_y,
     )
 
 total_params = sum(p.numel() for p in cnn_lstm.parameters())

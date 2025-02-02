@@ -25,11 +25,12 @@ if torch.cuda.is_available():
 else:
     print("CUDA não está disponível.")
 
-modelo = 5     # Modelo utilizado no teste
+modelo = 6     # Modelo utilizado no teste
 min_date = "2000-01-01" # Data mínima para treino
 batch_size = 1 # Processamento em paralelo
 n_data = 14    # Quantidade de bandas nos dados salvos
 n_dias = 7     # Número de dias no futuro da previsão
+dias_previsao = [1, 7] # Quais tempos devo prever Substitui n_dias!!!
 n_temp = 10    # Número de tempos no passado LSTM (dias)
 div_out = 4    # Os tamanhos X e Y serão dividos por div_out na convolução
 size_x = 694   # Dimensão X do raster
@@ -37,6 +38,9 @@ size_y = 1198  # Dimensão Y do raster
 bandas_time=[  # Bandas com dados temporais
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 ]
+
+# Obtendo máximo de dias
+n_dias = n_dias if dias_previsao is None else max(dias_previsao)
 
 
 print("Criando Leitor de Rasters")
@@ -57,61 +61,24 @@ reader = ReadRasters(
     ram_use_percentage = 0.8,
 )
 
-print(f"Criando RNA com o modelo {modelo}")
-if modelo == 1:
-    cnn_lstm = Rede(
-        batch_size  = batch_size,
-        n_dias      = n_dias,
-        n_tempos    = n_temp,
-        n_bandas    = n_data,
-        div_out     = div_out,
-        size_x      = size_x,
-        size_y      = size_y,
-        bandas_time = bandas_time,
-    )
-elif modelo == 2:
-    cnn_lstm = Rede2(
-        batch_size  = batch_size,
-        n_dias      = n_dias,
-        n_tempos    = n_temp,
-        n_bandas    = n_data,
-        div_out     = div_out,
-        size_x      = size_x,
-        size_y      = size_y,
-        bandas_time = bandas_time,
-    )
-elif modelo == 3:
-    cnn_lstm = Rede3(
-        batch_size  = batch_size,
-        n_dias      = n_dias,
-        n_tempos    = n_temp,
-        n_bandas    = n_data,
-        div_out     = div_out,
-        size_x      = size_x,
-        size_y      = size_y,
-        bandas_time = bandas_time,
-        null_val    = -99
-    )
-elif modelo == 4:
-    cnn_lstm = Rede4(
-        n_future      = n_dias,
-        n_past    = n_temp,
-        size_x      = size_x,
-        size_y      = size_y,
-    )
-elif modelo == 5:
-    cnn_lstm = Rede5(
-        n_future      = n_dias,
-        n_past    = n_temp,
-        size_x      = size_x,
-        size_y      = size_y,
-    )
+print(f"Criando RNA's com o modelo {modelo}")
+modelos:dict[int, nn.Module] = {}
+if modelo == 6:
+    for dia in dias_previsao:
+        modelos[dia] = Rede6(
+            n_future = n_dias,
+            n_past   = n_temp,
+            size_x   = size_x,
+            size_y   = size_y,
+        )
 
-total_params = sum(p.numel() for p in cnn_lstm.parameters())
-print(f"Modelo {modelo} com {total_params} parâmtros")
+total_params = sum(p.numel() for p in modelos[list(modelos.keys())[0]].parameters())
+print(f"Modelo {modelo} com {total_params} parâmetros")
 
-print("Criando Otimizador")
-optimizer = optim.AdamW(cnn_lstm.parameters(), lr=0.00002, weight_decay=0.001)
+print("Criando Otimizadores")
+opts:dict[int, optim.Optimizer] = {}
+for dia in dias_previsao:
+    opts[dia] = optim.AdamW(modelos[dia].parameters(), lr=0.00002, weight_decay=0.001)
 
 loss = 0
 start_epoch = 0
@@ -121,6 +88,7 @@ os.makedirs(f"modelos_{modelo}", exist_ok=True)
 if load:
     print("Importando modelos treinados")
     modelos = os.listdir(f"modelos_{modelo}")
+
     if len(modelos) > 0:
         for _modelo in modelos:
             file = f"modelos_{modelo}/{_modelo}"
@@ -131,11 +99,24 @@ if load:
         max_epoch = max(epochs)
 
         file = f"modelos_{modelo}/modelo_{max_epoch}.pth"
-
         checkpoint = torch.load(file, weights_only=True)
 
-        cnn_lstm.load_state_dict(checkpoint['model_state_dict'])
-        # optimizer.load_state_dict(checkpoint['optimizer_state_dict']) #TODO: testar se os pesos são leadados tbms
+        for dia in dias_previsao:
+            if f'model_state_dict_{dia}' in checkpoint:
+                modelos[dia].load_state_dict(checkpoint[f'model_state_dict_{dia}'])
+
+            if f'optimizer_state_dict_{dia}' in checkpoint:
+                lr_ans = opts[dia].defaults["lr"]
+                w_ans = opts[dia].defaults["weight_decay"]
+
+                opts[dia].load_state_dict(checkpoint[f'optimizer_state_dict_{dia}'])
+
+                opts[dia].defaults["lr"] = lr_ans
+                opts[dia].defaults["weight_decay"] = w_ans
+                for param_group in opts[dia].param_groups:
+                    param_group[0]["lr"] = lr_ans
+                    param_group[0]["weight_decay"] = w_ans
+
         start_epoch = checkpoint['epoch']+1
         loss = checkpoint['LOSS']
 
@@ -153,7 +134,9 @@ print("Iniciando Treino")
 
 while True:
     reader.reset()
-    cnn_lstm.train()
+
+    for dia in dias_previsao:
+        modelos[dia].train()
 
     criterion.epoch = epoch
     criterion.losses_epoch = []
@@ -166,30 +149,34 @@ while True:
 
             if X is None and y is None:
                 continue
-
-            if (y == -99).any().item():
+            elif (y == -99).any().item():
                 continue
 
-            # Forward pass
-            outputs = cnn_lstm((X[0].to("cuda"), X[1].to("cuda")))
-            loss = criterion(outputs, y.to("cuda"))
+            for dia in dias_previsao:
+                modelos[dia].train()
+                opts[dia].zero_grad()
 
-            # Backward pass e otimização
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                # Forward pass
+                outputs = modelos[dia]((X[0].to("cuda"), X[1].to("cuda")))
+                loss: torch.Tensor = criterion(outputs, y[dia].to("cuda"))
 
-            del X, y, outputs, loss
-            torch.cuda.empty_cache()  # Limpa a cache da GPU
+                # Backward pass e otimização
+                loss.backward()
+                opts[dia].step()
 
-            # Legenda
-            description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items() if "VAZAO" not in name.upper() and "COTA" not in name.upper()])
-            description += f" | Epoch: {epoch+1}"
+                del loss, outputs         # Limpa variáveis da CPU/RAM
+                torch.cuda.empty_cache()  # Limpa a cache da GPU
 
-            date = reader.date_range[reader.train_indexes[(reader.step - reader.batch_size)]]
+                # Legenda
+                description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items() if "VAZAO" not in name.upper() and "COTA" not in name.upper()])
+                description += f" | Epoch: {epoch+1}"
 
-            criterion.print(step, reader.total_train(), description, date)
+                date = reader.date_range[reader.train_indexes[(reader.step - reader.batch_size)]]
+
+                criterion.print(step, reader.total_train(), description, date)
+
             print("RASTERES:", len(reader.raster_buffer.rasters))
+            del X, y
         except Exception as e:
             traceback.print_exc()
             print(e)
@@ -200,9 +187,12 @@ while True:
 
     dados_save = {
         'epoch': epoch,
-        'model_state_dict': cnn_lstm.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
     }
+
+    for dia in dias_previsao:
+        dados_save[f'model_state_dict_{dia}']  = modelos[dia].state_dict()
+        dados_save[f'optimizer_state_dict_{dia}'] = opts[dia].state_dict()
+
     for name, erro in criterion.erros.items():
         dados_save[name] = erro
 
