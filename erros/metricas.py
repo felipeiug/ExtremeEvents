@@ -637,7 +637,7 @@ class CustomLoss4(nn.Module):
     def stop(self):
         self.start_time = None
 
-    def print(self, step, total, description, date:pd.Timestamp):
+    def print(self, step, total, description:str, date:pd.Timestamp):
         if self.start_time is None:
             print("É necessário iniciar o processo!")
             return
@@ -719,7 +719,8 @@ class CustomLoss4(nn.Module):
 
         # Exibir a barra
 
-        bar_width = max(terminal_width - len(text_after) - len(description), 10)  # Garantir no mínimo 10 caracteres para a barra
+        len_desc = len(description.split("\n")[-1])
+        bar_width = max(terminal_width - len(text_after) - len_desc, 10)  # Garantir no mínimo 10 caracteres para a barra
         filled_length = int(bar_width * progress)
 
         # Criar a barra de progresso
