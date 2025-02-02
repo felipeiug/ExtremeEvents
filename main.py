@@ -62,23 +62,23 @@ reader = ReadRasters(
 )
 
 print(f"Criando RNA's com o modelo {modelo}")
-modelos:dict[int, nn.Module] = {}
+nns:dict[int, nn.Module] = {}
 if modelo == 6:
     for dia in dias_previsao:
-        modelos[dia] = Rede6(
-            n_future = n_dias,
+        nns[dia] = Rede6(
+            n_future = 1,
             n_past   = n_temp,
             size_x   = size_x,
             size_y   = size_y,
         )
 
-total_params = sum(p.numel() for p in modelos[list(modelos.keys())[0]].parameters())
+total_params = sum(p.numel() for p in nns[list(nns.keys())[0]].parameters())
 print(f"Modelo {modelo} com {total_params} parâmetros")
 
 print("Criando Otimizadores")
 opts:dict[int, optim.Optimizer] = {}
 for dia in dias_previsao:
-    opts[dia] = optim.AdamW(modelos[dia].parameters(), lr=0.00002, weight_decay=0.001)
+    opts[dia] = optim.AdamW(nns[dia].parameters(), lr=0.00002, weight_decay=0.001)
 
 loss = 0
 start_epoch = 0
@@ -122,10 +122,11 @@ if load:
 
 # Métrica de Erro
 print("Criando Métricas de Erro")
-criterion = CustomLoss2(
+criterion = CustomLoss4(
     media=reader.mean_cotas,
     last_losses=last_losses,
-    start_epoch=start_epoch
+    start_epoch=start_epoch,
+    dias_previsao=dias_previsao,
 ).to(torch.float32)
 
 # Treinamento
@@ -136,10 +137,12 @@ while True:
     reader.reset()
 
     for dia in dias_previsao:
-        modelos[dia].train()
+        nns[dia].train()
 
     criterion.epoch = epoch
-    criterion.losses_epoch = []
+
+    # Resetando os losses por epoca
+    criterion.losses_epoch = {dia:[] for dia in dias_previsao}
 
     progress_bar = range(reader.total_train())
     criterion.start()
@@ -153,12 +156,12 @@ while True:
                 continue
 
             for dia in dias_previsao:
-                modelos[dia].train()
+                nns[dia].train()
                 opts[dia].zero_grad()
 
                 # Forward pass
-                outputs = modelos[dia]((X[0].to("cuda"), X[1].to("cuda")))
-                loss: torch.Tensor = criterion(outputs, y[dia].to("cuda"))
+                outputs = nns[dia]((X[0].to("cuda"), X[1].to("cuda")))
+                loss: torch.Tensor = criterion(outputs, y[:, dia-1].to("cuda"), dia)
 
                 # Backward pass e otimização
                 loss.backward()
@@ -167,13 +170,16 @@ while True:
                 del loss, outputs         # Limpa variáveis da CPU/RAM
                 torch.cuda.empty_cache()  # Limpa a cache da GPU
 
-                # Legenda
-                description = " | ".join([f" {name.upper()}: {f'{erro:.4g}' if erro is not None else None}" for name, erro in criterion.erros.items() if "VAZAO" not in name.upper() and "COTA" not in name.upper()])
-                description += f" | Epoch: {epoch+1}"
+            # Legenda
+            description = ""
+            for dia in dias_previsao:
+                description += f"Dia {dia}: " + " | ".join([f" {name.upper()}: {f'{erro[dia]:.4g}' if erro[dia] is not None else None}" for name, erro in criterion.erros.items()])
+                description += "\n"
 
-                date = reader.date_range[reader.train_indexes[(reader.step - reader.batch_size)]]
+            description += f"Epoch: {epoch+1}"
 
-                criterion.print(step, reader.total_train(), description, date)
+            date = reader.date_range[reader.train_indexes[(reader.step - reader.batch_size)]]
+            criterion.print(step, reader.total_train(), description, date)
 
             print("RASTERES:", len(reader.raster_buffer.rasters))
             del X, y
@@ -190,7 +196,7 @@ while True:
     }
 
     for dia in dias_previsao:
-        dados_save[f'model_state_dict_{dia}']  = modelos[dia].state_dict()
+        dados_save[f'model_state_dict_{dia}']     = nns[dia].state_dict()
         dados_save[f'optimizer_state_dict_{dia}'] = opts[dia].state_dict()
 
     for name, erro in criterion.erros.items():

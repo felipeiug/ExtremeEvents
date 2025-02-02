@@ -603,6 +603,216 @@ class CustomLoss3(nn.Module):
         return vazao_final
 
 
+# Utilizad a partir da Epoch 31
+class CustomLoss4(nn.Module):
+    def __init__(self, media:torch.Tensor, start_epoch:int=0, last_losses:list[dict[int,float]]=[], null_value:torch.Tensor = -99, dias_previsao:list[int] = []):
+        """
+        Inicializa a função de perda personalizada.
+        Args:
+            power (float): Exponente aplicado à diferença entre as previsões e os rótulos.
+        """
+        super(CustomLoss4, self).__init__()
+
+        self.dias_previsao = dias_previsao
+        self.media = media
+        self.null_value = null_value
+        self.erros = {
+            "LOSS": None,
+            "REAL": None,
+            "PRED": None,
+            "NSE": None,
+            "RMSE": None,
+        }
+        self.last_losses = last_losses
+
+        self.epoch = start_epoch
+        self.losses_epoch:dict[int, list[float]] = {dia:[] for dia in self.dias_previsao}
+        
+        self.last_pred:dict[int, torch.Tensor] = {}
+        self.last_obs:dict[int, torch.Tensor]  = {}
+
+    def start(self):
+        self.start_time = time.time()
+
+    def stop(self):
+        self.start_time = None
+
+    def print(self, step, total, description, date:pd.Timestamp):
+        if self.start_time is None:
+            print("É necessário iniciar o processo!")
+            return
+        
+        #%% =============================== Gráfico ===============================
+
+        # Obter a largura do terminal
+        terminal_width = shutil.get_terminal_size().columns
+
+        # x = range(0, self.epoch)
+        list_data = self.last_losses.copy()
+        if self.erros["LOSS"]:
+            list_data.append(self.erros["LOSS"])
+
+        charts = ""
+        for dia in self.dias_previsao:
+            charts += f"\nDia {dia}\n"
+
+            y = torch.log10(torch.tensor([i[dia] for i in list_data], requires_grad=False)).tolist()
+
+            chart = asciichartpy.plot(y, {
+                'height': 5,
+                'min':0,
+                'format':'{:.4g}'
+            })
+
+            charts += chart
+
+        # Gráfico 2
+        for dia in self.dias_previsao:
+            charts += f"\nLOSS dia {dia}\n"
+            losses = [i for i in self.losses_epoch[dia]]
+
+            N = max(20, int(terminal_width * 0.8))
+            if len(losses) > N:
+                losses = torch.tensor(losses, requires_grad=False)
+                chunks = torch.chunk(losses, N+1)
+                losses = torch.tensor([torch.nanmean(chunk) for chunk in chunks])
+        
+            chart = asciichartpy.plot(torch.tensor(losses, requires_grad=False).tolist(), {
+                'height': 5,
+                'min':0,
+                'format':'{:.4g}'
+            })
+
+            charts += chart
+
+        # Alterando a primeira coluna do chart:
+        lines = charts.split("\n")
+        new_chart = ""
+        max_size = 0
+        for line in lines:
+            start = line.split("┤")[0].split("┼")[0]
+            if len(start) > max_size:
+                max_size = len(start)
+        
+        for line in lines:
+            start = line.split("┤")[0].split("┼")[0]
+            diff = (max_size - len(start))
+            new_chart += " " * diff
+            new_chart += line[0:len(line)]
+            new_chart += "\n"
+        charts = new_chart
+        charts += "Losses: " + str(len(losses))
+
+        #%% =============================== Barra de progresso ===============================
+
+        progress = step / total
+        percentage = int(progress * 100)
+
+        description += f" {percentage}% ["
+
+        # Tempo de processamento
+        elapsed_time = time.time() - self.start_time
+        time_per_item = elapsed_time / step if step > 0 else 0
+        total_time = time_per_item * total
+
+        text_after = f"] {step}/{total} [{self._time_to_str(elapsed_time)}<{self._time_to_str(total_time)}, {time_per_item:.2f}s/item]"
+
+        # Exibir a barra
+
+        bar_width = max(terminal_width - len(text_after) - len(description), 10)  # Garantir no mínimo 10 caracteres para a barra
+        filled_length = int(bar_width * progress)
+
+        # Criar a barra de progresso
+        bar = "█" * filled_length + "-" * (bar_width - filled_length)
+
+        progress_bar = description + bar + text_after
+
+        #%% =============================== Tabela dos Dados ===============================
+
+        # Cota Obs. Cota Sim.
+        data = [[], []]
+        headers = []
+
+        headers.append("Tipo")
+        data[0].append("Cota Obs.")
+        data[1].append("Cota Sim.")
+
+        for dia in self.dias_previsao:
+            date_str = (date + pd.Timedelta(days=dia)).strftime("%d/%m/%y")
+            headers.append(date_str)
+
+            data[0].append(f"{torch.nanmean(self.last_obs[dia]):.4g}")
+            data[1].append(f"{torch.nanmean(self.last_pred[dia]):.4g}")
+
+        table = tabulate(
+            data,
+            headers=headers,
+            tablefmt="rounded_grid",
+            numalign="center",
+            stralign="center"
+        )
+
+        # %% =============================== Print ===============================
+        os.system("cls")
+        print(charts)
+        print()
+        print(progress_bar)
+        print()
+        print(table)
+
+    def _time_to_str(self, time):
+        hours = int(time // 3600)
+        minutes = int((time % 3600) // 60)
+        seconds = int(time % 60)
+        return f"{hours:02}:{minutes:02}:{seconds:02}"
+
+    def forward(self, y_pred:torch.Tensor, y_obs:torch.Tensor, dia: int):
+        """
+        Calcula a perda.
+        Args:
+            y_pred (Tensor): Previsões do modelo.
+            y_true (Tensor): Rótulos verdadeiros.
+        Returns:
+            Tensor: Escalar representando a perda.
+        """
+
+        self.last_obs[dia] = y_obs.clone().to("cpu")
+        self.last_pred[dia] = y_pred.clone().to("cpu")
+        
+        if self.erros["REAL"] is None or self.erros["PRED"] is None:
+            self.erros["REAL"] = {}
+            self.erros["PRED"] = {}
+
+        self.erros["REAL"][dia] = float(torch.nanmean(y_obs).to("cpu"))
+        self.erros["PRED"][dia] = float(torch.nanmean(y_pred).to("cpu"))
+
+        # Cálculo do NSE
+        numerator = torch.sum(((y_pred - y_obs) ** 2), dim=0)
+        denominator = torch.sum((y_obs - self.media) ** 2, dim=0) + 1E-8 # somando uma constante pequena para nunca ser 0
+        f1 = 1 - (numerator / denominator)
+        nse = torch.nanmean(f1)
+
+        if self.erros["NSE"] is None:
+            self.erros["NSE"] = {}
+        self.erros["NSE"][dia] = float(nse)
+
+        # MSE
+        mse = torch.mean(torch.abs(y_pred - y_obs) ** 2)
+
+        rmse = torch.sqrt(mse)
+        if self.erros["RMSE"] is None:
+            self.erros["RMSE"] = {}
+        self.erros["RMSE"][dia] = float(rmse)
+
+        self.losses_epoch[dia].append(mse)
+        mean_loss = sum(self.losses_epoch[dia])/max(1, len(self.losses_epoch[dia]))
+        if self.erros["LOSS"] is None:
+            self.erros["LOSS"] = {}
+        self.erros["LOSS"][dia] = float(mean_loss)
+
+        return mse.to("cuda")
+
+
 # MSE Error
 def MSE(y_pred, y_true):
     return torch.mean(torch.abs(y_pred - y_true) ** 2)
