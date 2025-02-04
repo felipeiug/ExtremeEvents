@@ -78,7 +78,7 @@ print(f"Modelo {modelo} com {total_params} parâmetros")
 print("Criando Otimizadores")
 opts:dict[int, optim.Optimizer] = {}
 for dia in dias_previsao:
-    opts[dia] = optim.AdamW(nns[dia].parameters(), lr=0.00002, weight_decay=0.001)
+    opts[dia] = optim.AdamW(nns[dia].parameters(), lr=0.00002, weight_decay=0.001) # lr=0.001, weight_decay=0.05
 
 loss = 0
 start_epoch = 0
@@ -103,7 +103,7 @@ if load:
 
         for dia in dias_previsao:
             if f'model_state_dict_{dia}' in checkpoint:
-                modelos[dia].load_state_dict(checkpoint[f'model_state_dict_{dia}'])
+                nns[dia].load_state_dict(checkpoint[f'model_state_dict_{dia}'])
 
             if f'optimizer_state_dict_{dia}' in checkpoint:
                 lr_ans = opts[dia].defaults["lr"]
@@ -114,8 +114,8 @@ if load:
                 opts[dia].defaults["lr"] = lr_ans
                 opts[dia].defaults["weight_decay"] = w_ans
                 for param_group in opts[dia].param_groups:
-                    param_group[0]["lr"] = lr_ans
-                    param_group[0]["weight_decay"] = w_ans
+                    param_group["lr"] = lr_ans
+                    param_group["weight_decay"] = w_ans
 
         start_epoch = checkpoint['epoch']+1
         loss = checkpoint['LOSS']
@@ -147,10 +147,9 @@ while True:
     progress_bar = range(reader.total_train())
     criterion.start()
     
-    X, y = reader.next()
     for step in progress_bar:
         try:
-            X, y = reader.buffer
+            X, y = reader.next()
 
             if X is None and y is None:
                 continue
